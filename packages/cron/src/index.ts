@@ -30,6 +30,12 @@ async function triggerWorkflow(fileId: string, fileName: string) {
 }
 
 async function checkAndTrigger() {
+  // Validate required environment variables
+  const folderId = process.env.DRIVE_FOLDER_ID;
+  if (!folderId) {
+    throw new Error('DRIVE_FOLDER_ID environment variable is required');
+  }
+
   // Authenticate with Google Drive using service account credentials from env vars
   // Falls back to JSON key file if GOOGLE_APPLICATION_CREDENTIALS is set
   const auth = process.env.GOOGLE_APPLICATION_CREDENTIALS
@@ -52,7 +58,6 @@ async function checkAndTrigger() {
   const drive = google.drive({ version: 'v3', auth });
 
   // Get all files in the folder
-  const folderId = process.env.DRIVE_FOLDER_ID!;
   const response = await drive.files.list({
     q: `'${folderId}' in parents and trashed=false`,
     fields: 'files(id, name, createdTime, mimeType)',
