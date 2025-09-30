@@ -1,5 +1,6 @@
 .google-keys.json
 .env
+.envrc
 
 .DS_Store
 

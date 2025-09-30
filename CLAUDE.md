@@ -73,6 +73,23 @@ A cron/scheduling package for the document flow system.
 
 Cron service must be deployed to a Railway service as a github integration. The service setup and integration is done manually. Service implementation must satisfy Railway requirements to cron services (see Railway documentation).
 
+
+## Environment Variables
+
+- DRIVE_FOLDER_ID -- ID of the Google Drive folder to monitor
+- GOOGLE_AUTH_PROVIDER_X509_CERT_URL -- URL for Google auth provider certs
+- GOOGLE_AUTH_URL -- Google OAuth2 auth URL
+- GOOGLE_CLIENT_EMAIL -- Service account email
+- GOOGLE_CLIENT_ID -- Service account client ID
+- GOOGLE_CLIENT_X509_CERT_URL -- Service account X.509 cert URL
+- GOOGLE_PRIVATE_KEY -- Service account private key (handle newlines properly)
+- GOOGLE_PRIVATE_KEY_ID -- Service account private key ID
+- GOOGLE_PROJECT_ID -- Project ID
+- GOOGLE_TOKEN_URL -- Google auth token URL
+- GOOGLE_UNIVERSE_DOMAIN -- Google universe domain
+- TRIGGER_DEV_API_KEY -- Trigger.dev API key
+- TRIGGER_DEV_ENDPOINT -- Trigger.dev API endpoint
+
 ## References 
 
 - [Trigger.dev Documentation](https://trigger.dev/docs/introduction)
