@@ -2,7 +2,7 @@
   "$schema": "https://schema.up.railway.app/railway.schema.json",
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "pnpm install --frozen-lockfile && pnpm --filter @repo/cron build"
+    "buildCommand": "pnpm install --frozen-lockfile && cd packages/cron && pnpm install && pnpm build"
   },
   "deploy": {
     "startCommand": "cd packages/cron && pnpm start",
