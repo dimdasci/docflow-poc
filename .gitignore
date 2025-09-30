@@ -1,0 +1,14 @@
+.google-keys.json
+.env
+
+.DS_Store
+
+# MCP Config 
+.mcp.json
+
+# Node modules
+node_modules/
+**/node_modules/
+
+# Trigger dev
+.trigger

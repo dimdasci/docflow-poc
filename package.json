@@ -1,0 +1,22 @@
+{
+  "name": "doc-flow-poc",
+  "version": "0.1.0",
+  "description": "Proof of concept for document flow automation",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "Dim Kharitonov <dimds@fastmail.com>",
+  "license": "MIT",
+  "packageManager": "pnpm@10.13.1",
+  "devDependencies": {
+    "@trigger.dev/build": "4.0.4",
+    "@types/node": "^24.6.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "@trigger.dev/sdk": "4.0.4"
+  }
+}
