@@ -4,7 +4,9 @@
   "description": "Proof of concept for document flow automation",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "typecheck": "pnpm -r exec tsc --noEmit",
+    "lint": "pnpm -r exec tsc --noEmit"
   },
   "keywords": [],
   "author": "Dim Kharitonov <dimds@fastmail.com>",
