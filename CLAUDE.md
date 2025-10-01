@@ -25,6 +25,7 @@ When new documents are detected (the job of cron), they are processed in a follo
 
 ```
 doc-flow-poc/
+├── docs/                 # Project Documentation files
 ├── trigger/
 │   └── ...               # Trigger.dev tasks definitions
 ├── packages/
@@ -87,8 +88,7 @@ Cron service must be deployed to a Railway service as a github integration. The 
 - GOOGLE_PROJECT_ID -- Project ID
 - GOOGLE_TOKEN_URL -- Google auth token URL
 - GOOGLE_UNIVERSE_DOMAIN -- Google universe domain
-- TRIGGER_DEV_API_KEY -- Trigger.dev API key
-- TRIGGER_DEV_ENDPOINT -- Trigger.dev API endpoint
+- TRIGGER_SECRET_KEY -- Trigger.dev API key
 
 ## References 
 

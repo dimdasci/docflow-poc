@@ -187,5 +187,6 @@ This is a **proof-of-concept implementation** with:
 ## References
 
 - Design Document: `../docs/WORKFLOW_DESIGN.md`
+- Implementation Summary: `../docs/IMPLEMENTATION_SUMMARY.md`
 - Trigger.dev v4 Docs: https://trigger.dev/docs
 - Project CLAUDE.md: `../CLAUDE.md`
