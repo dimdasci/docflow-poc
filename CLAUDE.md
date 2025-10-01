@@ -89,6 +89,7 @@ Cron service must be deployed to a Railway service as a github integration. The 
 - GOOGLE_TOKEN_URL -- Google auth token URL
 - GOOGLE_UNIVERSE_DOMAIN -- Google universe domain
 - TRIGGER_SECRET_KEY -- Trigger.dev API key
+- SUPABASE_DB_STRING -- Supabase connection string
 
 ## References 
 

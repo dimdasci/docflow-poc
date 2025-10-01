@@ -1,7 +1,7 @@
 # Document Processing Workflow - Implementation Summary
 
-**Date**: 2025-09-30
-**Status**: ✅ POC Implementation Complete (Happy Path Logging)
+**Date**: 2025-10-01
+**Status**: 🚧 In Progress - Phase 1: Core Integrations
 
 ## Overview
 
@@ -9,35 +9,44 @@ Successfully implemented the complete document processing workflow as a Trigger.
 
 ## Files Created
 
-### 1. `/trigger/document-tasks.ts` (1,049 lines)
+### 1. `/trigger/document-tasks.ts`
 
 Contains all 8 worker tasks (hidden, not exported for external use):
 
-- **`registerDocument`** - Creates initial registry entry
-- **`downloadAndPrepare`** - Downloads file from Google Drive
-- **`classifyDocument`** - Classifies document using Claude AI
-- **`storeFile`** - Uploads to Supabase Storage and deletes from inbox (SAFE POINT)
-- **`extractInvoiceData`** - Extracts structured invoice data
-- **`extractStatementData`** - Extracts structured bank statement data
-- **`extractLetterData`** - Extracts structured government letter data
-- **`storeMetadata`** - Saves extracted data and metadata to database
+- **`registerDocument`** ✅ - Creates initial registry entry (IMPLEMENTED with Postgres)
+- **`downloadAndPrepare`** 🔲 - Downloads file from Google Drive (Mock)
+- **`classifyDocument`** 🔲 - Classifies document using Claude AI (Mock)
+- **`storeFile`** 🔲 - Uploads to Supabase Storage and deletes from inbox (Mock - SAFE POINT)
+- **`extractInvoiceData`** 🔲 - Extracts structured invoice data (Mock)
+- **`extractStatementData`** 🔲 - Extracts structured bank statement data (Mock)
+- **`extractLetterData`** 🔲 - Extracts structured government letter data (Mock)
+- **`storeMetadata`** 🔲 - Saves extracted data and metadata to database (Mock)
 
 Also exports TypeScript types for all data structures (FileMetadata, ClassificationResult, InvoiceData, StatementData, LetterData).
 
-### 2. `/trigger/workflow.ts` (254 lines)
+### 2. `/trigger/workflow.ts`
 
 Contains the orchestrator task:
 
 - **`processDocumentWorkflow`** - Main exported task that coordinates the entire pipeline
 - Uses `triggerAndWait()` for all child tasks (sequential execution)
+- **Global idempotency keys** for child tasks (prevents duplicate work across retries)
 - Comprehensive logging at every step
 - Proper error handling with fallbacks for non-critical failures
 
-### 3. `/trigger/example-trigger.ts`
+### 3. `/trigger/db.ts` ✅ NEW
+
+Database client utility:
+
+- Singleton Postgres client using `postgres` package
+- Connection via `SUPABASE_DB_STRING` (Transaction Pooler)
+- Connection pooling configured (max 10 connections)
+
+### 4. `/trigger/example-trigger.ts`
 
 Documentation file showing how to trigger the workflow from external code (cron jobs, API handlers).
 
-### 4. `/trigger/README.md`
+### 5. `/trigger/README.md`
 
 Complete documentation covering:
 - Architecture and task structure
@@ -76,16 +85,16 @@ Output: {
 
 ### Worker Tasks
 
-| Task ID | Purpose | Retry | Critical? |
-|---------|---------|-------|-----------|
-| `register-document` | Create registry entry | 3 | ✅ Yes |
-| `download-and-prepare` | Download from Drive | 5 | ✅ Yes |
-| `classify-document` | Classify document type | 10 | ❌ No (defaults to "unknown") |
-| `store-file` | Upload to Supabase + delete from inbox | 5 | ✅ Yes (SAFE POINT) |
-| `extract-invoice-data` | Extract invoice data | 10 | ❌ No |
-| `extract-statement-data` | Extract statement data | 10 | ❌ No |
-| `extract-letter-data` | Extract letter data | 10 | ❌ No |
-| `store-metadata` | Save metadata to database | 3 | ✅ Yes |
+| Task ID | Purpose | Retry | Critical? | Status |
+|---------|---------|-------|-----------|--------|
+| `register-document` | Create registry entry | 3 | ✅ Yes | ✅ **IMPLEMENTED** |
+| `download-and-prepare` | Download from Drive | 5 | ✅ Yes | 🔲 Mock |
+| `classify-document` | Classify document type | 10 | ❌ No (defaults to "unknown") | 🔲 Mock |
+| `store-file` | Upload to Supabase + delete from inbox | 5 | ✅ Yes (SAFE POINT) | 🔲 Mock |
+| `extract-invoice-data` | Extract invoice data | 10 | ❌ No | 🔲 Mock |
+| `extract-statement-data` | Extract statement data | 10 | ❌ No | 🔲 Mock |
+| `extract-letter-data` | Extract letter data | 10 | ❌ No | 🔲 Mock |
+| `store-metadata` | Save metadata to database | 3 | ✅ Yes | 🔲 Mock |
 
 ## Workflow Execution Flow
 
@@ -134,30 +143,48 @@ This is the critical checkpoint that allows the workflow to be resilient and cos
 | Extraction failed | Store error, continue to metadata | ✅ Yes |
 | Metadata storage failed | Throw error to retry orchestrator | ❌ No |
 
-## Current Implementation - POC with Happy Path Logging
+## Implementation Progress
 
-### What's Implemented ✅
+### Completed ✅
 
-- Complete task structure with correct API boundaries
-- Proper orchestrator pattern using `triggerAndWait()`
-- Retry configurations matching design specifications
-- Comprehensive logging at every step
-- Mock data generation for all return values
-- TypeScript types for all payloads and outputs
-- Error handling structure (fallbacks, defaults)
-- Safe point architecture
+#### Infrastructure
+- ✅ Complete task structure with correct API boundaries
+- ✅ Proper orchestrator pattern using `triggerAndWait()`
+- ✅ Retry configurations matching design specifications
+- ✅ Comprehensive logging at every step
+- ✅ TypeScript types for all payloads and outputs
+- ✅ Error handling structure (fallbacks, defaults)
+- ✅ Safe point architecture
 
-### What's NOT Implemented ❌
+#### Idempotency Strategy
+- ✅ **Global scoped idempotency keys** for child tasks
+- ✅ No idempotency at workflow level (allows retries)
+- ✅ Prevents duplicate database inserts across workflow retries
+- ✅ Cached results speed up retry execution
+- ✅ Tested and validated with multiple runs
 
-This is a **proof-of-concept** with simulated operations:
+#### Database Integration
+- ✅ **`registerDocument` task** - Real Postgres implementation
+  - Direct SQL INSERT to `income_registry` table
+  - Returns UUID `registryId` and `docId`
+  - Uses `postgres` package via Transaction Pooler
+  - Proper error handling and logging
+- ✅ Database client singleton (`trigger/db.ts`)
+- ✅ Connection pooling configured
 
-- Google Drive API integration (download, delete)
-- Claude API integration (classification, extraction)
-- Supabase database operations (registry, type-specific tables)
-- Supabase Storage uploads (PDF, JSON files)
-- Actual file handling (real buffers, uploads)
-- Environment variable validation
-- Telemetry and monitoring
+### In Progress 🚧
+
+- 🔲 `downloadAndPrepare` - Google Drive API integration
+- 🔲 `classifyDocument` - Claude API integration
+- 🔲 `storeFile` - Supabase Storage + status updates
+- 🔲 `extract*Data` tasks - Claude API integration
+- 🔲 `storeMetadata` - Supabase DB updates + Storage
+
+### Not Started ❌
+
+- ❌ Environment variable validation
+- ❌ Telemetry and monitoring
+- ❌ End-to-end testing with real PDFs
 
 ### Logging Behavior
 
@@ -327,24 +354,38 @@ TRIGGER_DEV_ENDPOINT=
 
 ## Dependencies
 
-Current dependencies (installed):
-- `@trigger.dev/sdk` - v4.0.4
-- `@trigger.dev/build` - v4.0.4 (dev)
-- `zod` - v4.1.11
+### Installed ✅
+- `@trigger.dev/sdk` - v4.0.4 (Task execution framework)
+- `@trigger.dev/build` - v4.0.4 (dev) (Build tooling)
+- `zod` - v4.1.11 (Schema validation)
+- `postgres` - v3.4.7 (PostgreSQL client for Supabase)
 
-Additional dependencies needed for production:
-- `@anthropic-ai/sdk` - For Claude API
-- `@supabase/supabase-js` - For Supabase client
-- `googleapis` - Already used in cron package
+### Needed for Remaining Tasks
+- `@anthropic-ai/sdk` - For Claude API (classification, extraction)
+- `googleapis` - Already used in cron package (Google Drive operations)
 
 ## Summary
 
-✅ **Complete POC implementation delivered in single pass**
-- All 8 tasks implemented with correct structure
+### Phase 1 Progress (2025-10-01)
+
+✅ **Foundation Complete**
+- All 8 tasks scaffolded with correct structure
 - Orchestrator properly coordinates the workflow
 - Retry configurations match design specifications
 - Safe point architecture preserved
-- Comprehensive logging demonstrates workflow execution
-- Ready for integration with real APIs
+- Global idempotency strategy implemented and tested
 
-The implementation provides a solid foundation for the production system. The next phase involves replacing the mock operations with real API calls while maintaining the same task structure and error handling strategy.
+✅ **First Real Integration: `registerDocument`**
+- Direct Postgres connection to Supabase (Transaction Pooler)
+- Real database inserts to `income_registry` table
+- Idempotency prevents duplicate inserts across retries
+- Tested and validated with multiple workflow runs
+
+🚧 **Next Steps**
+1. Implement `downloadAndPrepare` with Google Drive API
+2. Implement `classifyDocument` with Claude API
+3. Implement `storeFile` with Supabase Storage
+4. Implement extraction tasks with Claude API
+5. Implement `storeMetadata` with Supabase DB
+
+The foundation is solid and production-ready. Each subsequent task will follow the same pattern: replace mock implementation with real API calls while maintaining idempotency, error handling, and logging.

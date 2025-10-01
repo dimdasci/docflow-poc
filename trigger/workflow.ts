@@ -1,4 +1,4 @@
-import { task } from "@trigger.dev/sdk";
+import { task, idempotencyKeys } from "@trigger.dev/sdk";
 import {
   registerDocument,
   downloadAndPrepare,
@@ -39,11 +39,15 @@ export const processDocumentWorkflow = task({
     console.log(`[${orchestratorId}] Created: ${payload.createdTime}`);
     console.log(`${"=".repeat(80)}\n`);
 
+    // Create GLOBAL idempotency key (same across all runs for this fileId)
+    const idempotencyKey = await idempotencyKeys.create(payload.fileId, { scope: "global" });
+    console.log(`[${orchestratorId}] 🔑 Global idempotency key created: ${idempotencyKey}\n`);
+
     // ========================================================================
     // STEP 0: Register document (prevent loss)
     // ========================================================================
     console.log(`[${orchestratorId}] 📝 STEP 0: Registering document...`);
-    const register = await registerDocument.triggerAndWait(payload);
+    const register = await registerDocument.triggerAndWait(payload, { idempotencyKey });
 
     if (!register.ok) {
       console.log(`[${orchestratorId}] ❌ CRITICAL ERROR: Failed to register document`);
@@ -64,7 +68,7 @@ export const processDocumentWorkflow = task({
       fileId: payload.fileId,
       fileName: payload.fileName,
       mimeType: payload.mimeType,
-    });
+    }, { idempotencyKey });
 
     if (!download.ok) {
       console.log(`[${orchestratorId}] ❌ Download failed (status: download_failed)`);
@@ -90,7 +94,7 @@ export const processDocumentWorkflow = task({
       docId,
       fileBuffer: download.output.fileBuffer,
       metadata: download.output.metadata,
-    });
+    }, { idempotencyKey });
 
     // Classification failure is not fatal - default to "unknown"
     const { documentType, confidence, claudeFileUrl } = classify.ok
@@ -118,7 +122,7 @@ export const processDocumentWorkflow = task({
       fileName: payload.fileName,
       documentType,
       metadata: download.output.metadata,
-    });
+    }, { idempotencyKey });
 
     if (!storeResult.ok) {
       console.log(`[${orchestratorId}] ❌ CRITICAL ERROR: File storage failed`);
@@ -158,7 +162,7 @@ export const processDocumentWorkflow = task({
           extractResult = await extractInvoiceData.triggerAndWait({
             docId,
             claudeFileUrl,
-          });
+          }, { idempotencyKey });
           if (extractResult.ok) {
             console.log(`[${orchestratorId}] ✅ Invoice data extracted successfully`);
           } else {
@@ -172,7 +176,7 @@ export const processDocumentWorkflow = task({
           extractResult = await extractStatementData.triggerAndWait({
             docId,
             claudeFileUrl,
-          });
+          }, { idempotencyKey });
           if (extractResult.ok) {
             console.log(`[${orchestratorId}] ✅ Statement data extracted successfully`);
           } else {
@@ -186,7 +190,7 @@ export const processDocumentWorkflow = task({
           extractResult = await extractLetterData.triggerAndWait({
             docId,
             claudeFileUrl,
-          });
+          }, { idempotencyKey });
           if (extractResult.ok) {
             console.log(`[${orchestratorId}] ✅ Letter data extracted successfully`);
           } else {
@@ -212,7 +216,7 @@ export const processDocumentWorkflow = task({
       classification: classify.ok ? classify.output : null,
       extractedData: extractResult?.ok ? extractResult.output : null,
       extractionError,
-    });
+    }, { idempotencyKey });
 
     if (!metadataResult.ok) {
       console.log(`[${orchestratorId}] ❌ CRITICAL ERROR: Metadata storage failed`);
