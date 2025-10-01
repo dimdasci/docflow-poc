@@ -40,12 +40,10 @@ export const processDocumentWorkflow = task({
     console.log(`${"=".repeat(80)}\n`);
 
     // Create GLOBAL idempotency key (same across all runs for this fileId)
-    // TTL set to 10 minutes for development (allows quick reruns)
     const idempotencyKey = await idempotencyKeys.create(payload.fileId, {
       scope: "global",
-      ttl: "10m" // 10 minutes for development
     });
-    console.log(`[${orchestratorId}] 🔑 Global idempotency key created: ${idempotencyKey} (TTL: 10m)\n`);
+    console.log(`[${orchestratorId}] 🔑 Global idempotency key created: ${idempotencyKey}\n`);
 
     // ========================================================================
     // STEP 0: Register document (prevent loss)
@@ -102,9 +100,9 @@ export const processDocumentWorkflow = task({
     }, { idempotencyKey });
 
     // Classification failure is not fatal - default to "unknown"
-    const { documentType, confidence, claudeFileUrl } = classify.ok
+    const { documentType, confidence, claudeFileId } = classify.ok
       ? classify.output
-      : { documentType: "unknown" as const, confidence: 0, claudeFileUrl: null };
+      : { documentType: "unknown" as const, confidence: 0, claudeFileId: null };
 
     if (!classify.ok) {
       console.log(`[${orchestratorId}] ⚠️  Classification failed, defaulting to "unknown"`);
@@ -166,7 +164,7 @@ export const processDocumentWorkflow = task({
           console.log(`[${orchestratorId}] Extracting invoice data...`);
           extractResult = await extractInvoiceData.triggerAndWait({
             docId,
-            claudeFileUrl,
+            claudeFileId,
           }, { idempotencyKey });
           if (extractResult.ok) {
             console.log(`[${orchestratorId}] ✅ Invoice data extracted successfully`);
@@ -180,7 +178,7 @@ export const processDocumentWorkflow = task({
           console.log(`[${orchestratorId}] Extracting bank statement data...`);
           extractResult = await extractStatementData.triggerAndWait({
             docId,
-            claudeFileUrl,
+            claudeFileId,
           }, { idempotencyKey });
           if (extractResult.ok) {
             console.log(`[${orchestratorId}] ✅ Statement data extracted successfully`);
@@ -194,7 +192,7 @@ export const processDocumentWorkflow = task({
           console.log(`[${orchestratorId}] Extracting government letter data...`);
           extractResult = await extractLetterData.triggerAndWait({
             docId,
-            claudeFileUrl,
+            claudeFileId,
           }, { idempotencyKey });
           if (extractResult.ok) {
             console.log(`[${orchestratorId}] ✅ Letter data extracted successfully`);
