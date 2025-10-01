@@ -40,8 +40,12 @@ export const processDocumentWorkflow = task({
     console.log(`${"=".repeat(80)}\n`);
 
     // Create GLOBAL idempotency key (same across all runs for this fileId)
-    const idempotencyKey = await idempotencyKeys.create(payload.fileId, { scope: "global" });
-    console.log(`[${orchestratorId}] 🔑 Global idempotency key created: ${idempotencyKey}\n`);
+    // TTL set to 10 minutes for development (allows quick reruns)
+    const idempotencyKey = await idempotencyKeys.create(payload.fileId, {
+      scope: "global",
+      ttl: "10m" // 10 minutes for development
+    });
+    console.log(`[${orchestratorId}] 🔑 Global idempotency key created: ${idempotencyKey} (TTL: 10m)\n`);
 
     // ========================================================================
     // STEP 0: Register document (prevent loss)
@@ -83,8 +87,9 @@ export const processDocumentWorkflow = task({
       };
     }
 
-    console.log(`[${orchestratorId}] ✅ File downloaded successfully`);
-    console.log(`[${orchestratorId}] - File size: ${download.output.fileBuffer.length} bytes\n`);
+    console.log(`[${orchestratorId}] ✅ File downloaded and uploaded to inbox`);
+    console.log(`[${orchestratorId}] - Storage Path: ${download.output.storagePath}`);
+    console.log(`[${orchestratorId}] - File size: ${download.output.metadata.size} bytes\n`);
 
     // ========================================================================
     // STEP 2: Classify document using Claude AI
@@ -92,7 +97,7 @@ export const processDocumentWorkflow = task({
     console.log(`[${orchestratorId}] 🤖 STEP 2: Classifying document...`);
     const classify = await classifyDocument.triggerAndWait({
       docId,
-      fileBuffer: download.output.fileBuffer,
+      storagePath: download.output.storagePath,
       metadata: download.output.metadata,
     }, { idempotencyKey });
 
@@ -113,12 +118,12 @@ export const processDocumentWorkflow = task({
     // ========================================================================
     // STEP 3: Store file to Supabase Storage (SAFE POINT!)
     // ========================================================================
-    console.log(`[${orchestratorId}] 💾 STEP 3: Storing file to Supabase...`);
+    console.log(`[${orchestratorId}] 💾 STEP 3: Moving file to permanent location...`);
     console.log(`[${orchestratorId}] ⚠️  CRITICAL STEP: This is the SAFE POINT!`);
     const storeResult = await storeFile.triggerAndWait({
       docId,
       fileId: payload.fileId,
-      fileBuffer: download.output.fileBuffer,
+      storagePath: download.output.storagePath,
       fileName: payload.fileName,
       documentType,
       metadata: download.output.metadata,

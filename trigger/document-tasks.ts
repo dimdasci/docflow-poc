@@ -1,6 +1,8 @@
 import { task } from "@trigger.dev/sdk";
 import { z } from "zod";
 import { getDb } from "./db";
+import { downloadFileFromDrive, getFileMetadata } from "./drive";
+import { uploadFile } from "./storage";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -217,43 +219,67 @@ const downloadAndPrepare = task({
     const taskId = "download-and-prepare";
     console.log(`[${taskId}] Starting with payload:`, JSON.stringify(payload, null, 2));
 
-    // Validate MIME type
-    console.log(`[${taskId}] Validating MIME type...`);
-    if (payload.mimeType !== "application/pdf") {
-      console.log(`[${taskId}] ERROR: Invalid MIME type "${payload.mimeType}"`);
-      throw new Error(`Unsupported MIME type: ${payload.mimeType}`);
+    try {
+      // Validate MIME type
+      console.log(`[${taskId}] Validating MIME type...`);
+      if (payload.mimeType !== "application/pdf") {
+        console.log(`[${taskId}] ERROR: Invalid MIME type "${payload.mimeType}"`);
+        throw new Error(`Unsupported MIME type: ${payload.mimeType}`);
+      }
+      console.log(`[${taskId}] ✓ MIME type validated: application/pdf`);
+
+      // Get file metadata from Google Drive
+      console.log(`[${taskId}] Fetching file metadata from Google Drive...`);
+      const driveMetadata = await getFileMetadata(payload.fileId);
+      console.log(`[${taskId}] ✓ Metadata fetched`);
+      console.log(`[${taskId}] - Size: ${driveMetadata.size ? (Number(driveMetadata.size) / 1024).toFixed(2) : 'unknown'} KB`);
+      console.log(`[${taskId}] - MD5 Checksum: ${driveMetadata.md5Checksum || 'N/A'}`);
+
+      // Download file from Google Drive
+      console.log(`[${taskId}] Downloading file from Google Drive...`);
+      console.log(`[${taskId}] - File ID: ${payload.fileId}`);
+      console.log(`[${taskId}] - File Name: ${payload.fileName}`);
+
+      const fileBuffer = await downloadFileFromDrive(payload.fileId);
+
+      console.log(`[${taskId}] ✓ File downloaded successfully`);
+      console.log(`[${taskId}] - Downloaded size: ${(fileBuffer.length / 1024).toFixed(2)} KB`);
+
+      // Upload to Supabase Storage inbox folder
+      console.log(`[${taskId}] Uploading file to Supabase Storage inbox...`);
+      const storageKey = `inbox/${payload.docId}.pdf`;
+
+      const uploadResult = await uploadFile(
+        storageKey,
+        fileBuffer,
+        payload.mimeType,
+        payload.fileName // Pass original filename to metadata
+      );
+
+      console.log(`[${taskId}] ✓ File uploaded to Supabase Storage`);
+      console.log(`[${taskId}] - Storage Key: ${uploadResult.key}`);
+      console.log(`[${taskId}] - Storage URL: ${uploadResult.url}`);
+
+      const metadata: FileMetadata = {
+        fileName: payload.fileName,
+        mimeType: payload.mimeType,
+        size: fileBuffer.length,
+        createdTime: driveMetadata.createdTime || new Date().toISOString(),
+      };
+
+      console.log(`[${taskId}] Completed successfully`);
+
+      // Return storage path instead of buffer to keep tasks stateless
+      return {
+        storagePath: storageKey,
+        storageUrl: uploadResult.url,
+        metadata,
+        md5Checksum: driveMetadata.md5Checksum,
+      };
+    } catch (error) {
+      console.error(`[${taskId}] Error:`, error);
+      throw new Error(`Failed to download and prepare file: ${error instanceof Error ? error.message : String(error)}`);
     }
-    console.log(`[${taskId}] ✓ MIME type validated: application/pdf`);
-
-    // Simulate status update
-    console.log(`[${taskId}] Updating registry status to "downloading"...`);
-
-    // Simulate Google Drive download
-    console.log(`[${taskId}] Downloading file from Google Drive...`);
-    console.log(`[${taskId}] - File ID: ${payload.fileId}`);
-    console.log(`[${taskId}] - File Name: ${payload.fileName}`);
-
-    // Mock file buffer (simulating PDF content)
-    const mockFileSize = Math.floor(Math.random() * 1000000) + 50000; // 50KB - 1MB
-    console.log(`[${taskId}] ✓ File downloaded successfully`);
-    console.log(`[${taskId}] - Size: ${(mockFileSize / 1024).toFixed(2)} KB`);
-
-    // Simulate status update
-    console.log(`[${taskId}] Updating registry status to "downloaded"...`);
-
-    const metadata: FileMetadata = {
-      fileName: payload.fileName,
-      mimeType: payload.mimeType,
-      size: mockFileSize,
-      createdTime: new Date().toISOString(),
-    };
-
-    console.log(`[${taskId}] Completed successfully`);
-
-    return {
-      fileBuffer: Buffer.from(`MOCK_PDF_CONTENT_${payload.fileId}`),
-      metadata,
-    };
   },
 });
 
@@ -272,15 +298,19 @@ const classifyDocument = task({
   },
   run: async (payload: {
     docId: string;
-    fileBuffer: Buffer;
+    storagePath: string;
     metadata: FileMetadata;
   }) => {
     const taskId = "classify-document";
     console.log(`[${taskId}] Starting classification for doc: ${payload.docId}`);
     console.log(`[${taskId}] File: ${payload.metadata.fileName} (${payload.metadata.size} bytes)`);
+    console.log(`[${taskId}] Storage Path: ${payload.storagePath}`);
 
     // Simulate status update
     console.log(`[${taskId}] Updating registry status to "classifying"...`);
+
+    // TODO: Download file from Supabase Storage and upload to Claude
+    // const fileBuffer = await downloadFile(payload.storagePath);
 
     // Simulate Claude API upload
     console.log(`[${taskId}] Uploading file to Claude Files API...`);
@@ -351,7 +381,7 @@ const storeFile = task({
   run: async (payload: {
     docId: string;
     fileId: string;
-    fileBuffer: Buffer;
+    storagePath: string; // Path to file in inbox folder
     fileName: string;
     documentType: string;
     metadata: FileMetadata;
@@ -359,34 +389,42 @@ const storeFile = task({
     const taskId = "store-file";
     console.log(`[${taskId}] Starting storage for doc: ${payload.docId}`);
     console.log(`[${taskId}] Document Type: ${payload.documentType}`);
+    console.log(`[${taskId}] Source Storage Path: ${payload.storagePath}`);
+
+    // TODO: Implement file copy from inbox to permanent location
+    // TODO: Delete from Google Drive inbox
+    // TODO: Delete from Supabase inbox folder
 
     // Simulate status update
     console.log(`[${taskId}] Updating registry status to "storing"...`);
 
-    // Determine storage path
+    // Determine final storage path
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, "0");
-    const storagePath = `${payload.documentType}/${year}/${month}/${payload.docId}.pdf`;
+    const finalStoragePath = `${payload.documentType}/${year}/${month}/${payload.docId}.pdf`;
 
-    console.log(`[${taskId}] Determined storage path: ${storagePath}`);
+    console.log(`[${taskId}] Determined final storage path: ${finalStoragePath}`);
 
-    // Simulate Supabase Storage upload
-    console.log(`[${taskId}] Uploading PDF to Supabase Storage...`);
-    console.log(`[${taskId}] - Bucket: "documents"`);
-    console.log(`[${taskId}] - Path: ${storagePath}`);
-    console.log(`[${taskId}] - Content-Type: application/pdf`);
-    console.log(`[${taskId}] - Size: ${payload.fileBuffer.length} bytes`);
-    console.log(`[${taskId}] ✓ Upload completed successfully`);
+    // Simulate copy from inbox to permanent location
+    console.log(`[${taskId}] Copying file from inbox to permanent location...`);
+    console.log(`[${taskId}] - From: ${payload.storagePath}`);
+    console.log(`[${taskId}] - To: ${finalStoragePath}`);
+    console.log(`[${taskId}] ✓ Copy completed successfully`);
 
-    // Simulate Google Drive deletion (only if upload succeeds)
+    // Simulate Google Drive deletion
     console.log(`[${taskId}] Deleting file from Google Drive inbox...`);
     console.log(`[${taskId}] - File ID: ${payload.fileId}`);
-    console.log(`[${taskId}] ✓ File deleted from inbox`);
+    console.log(`[${taskId}] ✓ File deleted from Drive inbox`);
+
+    // Simulate Supabase inbox cleanup
+    console.log(`[${taskId}] Deleting file from Supabase inbox folder...`);
+    console.log(`[${taskId}] - Path: ${payload.storagePath}`);
+    console.log(`[${taskId}] ✓ Inbox cleaned`);
 
     // Simulate status update
     console.log(`[${taskId}] Updating registry with storage info...`);
-    console.log(`[${taskId}] - storage_path_pdf: ${storagePath}`);
+    console.log(`[${taskId}] - storage_path_pdf: ${finalStoragePath}`);
     console.log(`[${taskId}] - status: "stored"`);
     console.log(`[${taskId}] - stored_at: ${now.toISOString()}`);
 
@@ -399,7 +437,7 @@ const storeFile = task({
 
     return {
       stored: true,
-      storagePath,
+      storagePath: finalStoragePath,
       deletedFromInbox: true,
     };
   },
