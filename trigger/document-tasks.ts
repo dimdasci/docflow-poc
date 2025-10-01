@@ -2,7 +2,8 @@ import { task } from "@trigger.dev/sdk";
 import { z } from "zod";
 import { getDb } from "./db";
 import { downloadFileFromDrive, getFileMetadata } from "./drive";
-import { uploadFile } from "./storage";
+import { uploadFile, downloadFile } from "./storage";
+import { uploadFileToClaude, classifyDocument as claudeClassify } from "./claude";
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -20,7 +21,7 @@ interface ClassificationResult {
   confidence: number;
   reasoning: string;
   possibleType: string;
-  claudeFileUrl: string | null;
+  claudeFileId: string | null;
 }
 
 interface InvoiceData {
@@ -219,11 +220,30 @@ const downloadAndPrepare = task({
     const taskId = "download-and-prepare";
     console.log(`[${taskId}] Starting with payload:`, JSON.stringify(payload, null, 2));
 
+    const sql = getDb();
+
     try {
+      // Update status to "downloading"
+      console.log(`[${taskId}] Updating status to "downloading"...`);
+      await sql`
+        UPDATE income_registry
+        SET status = 'downloading'
+        WHERE doc_id = ${payload.docId}
+      `;
+
       // Validate MIME type
       console.log(`[${taskId}] Validating MIME type...`);
       if (payload.mimeType !== "application/pdf") {
         console.log(`[${taskId}] ERROR: Invalid MIME type "${payload.mimeType}"`);
+
+        // Update status to "download_failed"
+        await sql`
+          UPDATE income_registry
+          SET status = 'download_failed',
+              error_message = ${`Unsupported MIME type: ${payload.mimeType}`}
+          WHERE doc_id = ${payload.docId}
+        `;
+
         throw new Error(`Unsupported MIME type: ${payload.mimeType}`);
       }
       console.log(`[${taskId}] ✓ MIME type validated: application/pdf`);
@@ -267,6 +287,14 @@ const downloadAndPrepare = task({
         createdTime: driveMetadata.createdTime || new Date().toISOString(),
       };
 
+      // Update status to "downloaded"
+      console.log(`[${taskId}] Updating status to "downloaded"...`);
+      await sql`
+        UPDATE income_registry
+        SET status = 'downloaded'
+        WHERE doc_id = ${payload.docId}
+      `;
+
       console.log(`[${taskId}] Completed successfully`);
 
       // Return storage path instead of buffer to keep tasks stateless
@@ -278,6 +306,19 @@ const downloadAndPrepare = task({
       };
     } catch (error) {
       console.error(`[${taskId}] Error:`, error);
+
+      // Update status to "download_failed"
+      try {
+        await sql`
+          UPDATE income_registry
+          SET status = 'download_failed',
+              error_message = ${error instanceof Error ? error.message : String(error)}
+          WHERE doc_id = ${payload.docId}
+        `;
+      } catch (dbError) {
+        console.error(`[${taskId}] Failed to update error status:`, dbError);
+      }
+
       throw new Error(`Failed to download and prepare file: ${error instanceof Error ? error.message : String(error)}`);
     }
   },
@@ -306,62 +347,125 @@ const classifyDocument = task({
     console.log(`[${taskId}] File: ${payload.metadata.fileName} (${payload.metadata.size} bytes)`);
     console.log(`[${taskId}] Storage Path: ${payload.storagePath}`);
 
-    // Simulate status update
-    console.log(`[${taskId}] Updating registry status to "classifying"...`);
+    const sql = getDb();
 
-    // TODO: Download file from Supabase Storage and upload to Claude
-    // const fileBuffer = await downloadFile(payload.storagePath);
+    try {
+      // Update registry status to "classifying"
+      console.log(`[${taskId}] Updating registry status to "classifying"...`);
+      await sql`
+        UPDATE income_registry
+        SET status = 'classifying'
+        WHERE doc_id = ${payload.docId}
+      `;
 
-    // Simulate Claude API upload
-    console.log(`[${taskId}] Uploading file to Claude Files API...`);
-    const mockClaudeFileUrl = `https://api.anthropic.com/v1/files/file_${Date.now()}`;
-    console.log(`[${taskId}] ✓ File uploaded to Claude`);
-    console.log(`[${taskId}] - Claude File URL: ${mockClaudeFileUrl}`);
+      // Step 1: Download file from Supabase Storage inbox
+      console.log(`[${taskId}] Downloading file from Supabase Storage...`);
+      console.log(`[${taskId}] - Storage path: ${payload.storagePath}`);
 
-    // Simulate classification
-    console.log(`[${taskId}] Calling Claude with classification prompt...`);
-    console.log(`[${taskId}] Requesting classification into:`);
-    console.log(`[${taskId}] - invoice`);
-    console.log(`[${taskId}] - bank_statement`);
-    console.log(`[${taskId}] - government_letter`);
-    console.log(`[${taskId}] - unknown`);
+      const fileBuffer = await downloadFile(payload.storagePath);
 
-    // Mock classification result (randomize for variety)
-    const types: Array<"invoice" | "bank_statement" | "government_letter" | "unknown"> = [
-      "invoice",
-      "bank_statement",
-      "government_letter",
-      "unknown",
-    ];
-    const documentType = types[Math.floor(Math.random() * types.length)];
-    const confidence = documentType === "unknown" ? 0.3 : 0.85 + Math.random() * 0.14;
-    const reasoning = `Based on document structure, formatting, and content analysis, this appears to be a ${documentType}.`;
+      console.log(`[${taskId}] ✓ File downloaded from storage`);
+      console.log(`[${taskId}] - Downloaded size: ${(fileBuffer.length / 1024).toFixed(2)} KB`);
 
-    console.log(`[${taskId}] ✓ Classification completed`);
-    console.log(`[${taskId}] - Document Type: ${documentType}`);
-    console.log(`[${taskId}] - Confidence: ${confidence.toFixed(2)}`);
-    console.log(`[${taskId}] - Reasoning: ${reasoning}`);
+      // Step 2: Upload file to Claude Files API
+      console.log(`[${taskId}] Uploading file to Claude Files API...`);
+      console.log(`[${taskId}] - File name: ${payload.metadata.fileName}`);
+      console.log(`[${taskId}] - MIME type: ${payload.metadata.mimeType}`);
 
-    // Apply confidence threshold
-    const finalType = confidence >= 0.8 ? documentType : "unknown";
-    if (finalType === "unknown" && confidence < 0.8) {
-      console.log(`[${taskId}] ⚠ Confidence below threshold (0.8), defaulting to "unknown"`);
+      const uploadResult = await uploadFileToClaude(
+        fileBuffer,
+        payload.metadata.fileName,
+        payload.metadata.mimeType
+      );
+
+      console.log(`[${taskId}] ✓ File uploaded to Claude`);
+      console.log(`[${taskId}] - Claude File ID: ${uploadResult.id}`);
+
+      // Step 3: Classify document using Claude API
+      console.log(`[${taskId}] Calling Claude with classification prompt...`);
+      console.log(`[${taskId}] - Model: claude-3-5-haiku-20241022`);
+      console.log(`[${taskId}] Requesting classification into:`);
+      console.log(`[${taskId}] - invoice`);
+      console.log(`[${taskId}] - bank_statement`);
+      console.log(`[${taskId}] - government_letter`);
+      console.log(`[${taskId}] - unknown`);
+
+      const classification = await claudeClassify(uploadResult.id);
+
+      console.log(`[${taskId}] ✓ Classification completed`);
+      console.log(`[${taskId}] - Document Type (raw): ${classification.document_type}`);
+      console.log(`[${taskId}] - Confidence: ${classification.confidence.toFixed(2)}`);
+      console.log(`[${taskId}] - Reasoning: ${classification.reasoning}`);
+
+      // Step 4: Apply confidence threshold (matching n8n workflow)
+      const finalType = classification.confidence >= 0.8 ? classification.document_type : "unknown";
+
+      if (finalType === "unknown" && classification.confidence < 0.8) {
+        console.log(`[${taskId}] ⚠️  Confidence below threshold (0.8), defaulting to "unknown"`);
+        console.log(`[${taskId}] - Original classification: ${classification.document_type}`);
+        console.log(`[${taskId}] - Confidence: ${classification.confidence.toFixed(2)}`);
+      }
+
+      // Update registry status to "classified" with classification results
+      console.log(`[${taskId}] Updating registry status to "classified"...`);
+      await sql`
+        UPDATE income_registry
+        SET status = 'classified',
+            classification = ${finalType},
+            confidence = ${classification.confidence},
+            reasoning = ${classification.confidence >= 0.8
+              ? classification.reasoning
+              : `Low confidence (${classification.confidence.toFixed(2)}). Original classification: ${classification.document_type}. ${classification.reasoning}`},
+            possible_type = ${classification.document_type}
+        WHERE doc_id = ${payload.docId}
+      `;
+
+      const result: ClassificationResult = {
+        documentType: finalType,
+        confidence: classification.confidence,
+        reasoning: classification.confidence >= 0.8
+          ? classification.reasoning
+          : `Low confidence (${classification.confidence.toFixed(2)}). Original classification: ${classification.document_type}. ${classification.reasoning}`,
+        possibleType: classification.document_type,
+        claudeFileId: uploadResult.id,
+      };
+
+      console.log(`[${taskId}] Completed successfully`);
+      console.log(`[${taskId}] - Final Document Type: ${result.documentType}`);
+
+      return result;
+    } catch (error) {
+      console.error(`[${taskId}] Error during classification:`, error);
+
+      // Default to "unknown" on error (non-fatal)
+      console.log(`[${taskId}] ⚠️  Classification failed, defaulting to "unknown"`);
+
+      // Update registry with classification failure
+      try {
+        await sql`
+          UPDATE income_registry
+          SET status = 'classification_failed',
+              classification = 'unknown',
+              confidence = 0.0,
+              reasoning = ${`Classification failed: ${error instanceof Error ? error.message : String(error)}`},
+              possible_type = 'unknown',
+              error_message = ${error instanceof Error ? error.message : String(error)}
+          WHERE doc_id = ${payload.docId}
+        `;
+      } catch (dbError) {
+        console.error(`[${taskId}] Failed to update error status:`, dbError);
+      }
+
+      const fallbackResult: ClassificationResult = {
+        documentType: "unknown",
+        confidence: 0.0,
+        reasoning: `Classification failed: ${error instanceof Error ? error.message : String(error)}`,
+        possibleType: "unknown",
+        claudeFileId: null,
+      };
+
+      return fallbackResult;
     }
-
-    // Simulate status update
-    console.log(`[${taskId}] Updating registry status to "classified"...`);
-
-    const result: ClassificationResult = {
-      documentType: finalType,
-      confidence,
-      reasoning,
-      possibleType: documentType,
-      claudeFileUrl: mockClaudeFileUrl,
-    };
-
-    console.log(`[${taskId}] Completed successfully`);
-
-    return result;
   },
 });
 
@@ -391,12 +495,16 @@ const storeFile = task({
     console.log(`[${taskId}] Document Type: ${payload.documentType}`);
     console.log(`[${taskId}] Source Storage Path: ${payload.storagePath}`);
 
-    // TODO: Implement file copy from inbox to permanent location
-    // TODO: Delete from Google Drive inbox
-    // TODO: Delete from Supabase inbox folder
+    const sql = getDb();
 
-    // Simulate status update
-    console.log(`[${taskId}] Updating registry status to "storing"...`);
+    try {
+      // Update status to "storing"
+      console.log(`[${taskId}] Updating registry status to "storing"...`);
+      await sql`
+        UPDATE income_registry
+        SET status = 'storing'
+        WHERE doc_id = ${payload.docId}
+      `;
 
     // Determine final storage path
     const now = new Date();
@@ -422,24 +530,48 @@ const storeFile = task({
     console.log(`[${taskId}] - Path: ${payload.storagePath}`);
     console.log(`[${taskId}] ✓ Inbox cleaned`);
 
-    // Simulate status update
-    console.log(`[${taskId}] Updating registry with storage info...`);
-    console.log(`[${taskId}] - storage_path_pdf: ${finalStoragePath}`);
-    console.log(`[${taskId}] - status: "stored"`);
-    console.log(`[${taskId}] - stored_at: ${now.toISOString()}`);
+      // Update registry with storage info
+      console.log(`[${taskId}] Updating registry with storage info...`);
+      console.log(`[${taskId}] - storage_path_pdf: ${finalStoragePath}`);
+      console.log(`[${taskId}] - status: "stored"`);
+      console.log(`[${taskId}] - stored_at: ${now.toISOString()}`);
 
-    console.log(`[${taskId}] 🎉 SAFE POINT REACHED!`);
-    console.log(`[${taskId}] - Document is persistent in Supabase Storage`);
-    console.log(`[${taskId}] - Inbox is clean (file deleted from Drive)`);
-    console.log(`[${taskId}] - Safe to retry expensive AI operations`);
+      await sql`
+        UPDATE income_registry
+        SET status = 'stored',
+            storage_path_pdf = ${finalStoragePath}
+        WHERE doc_id = ${payload.docId}
+      `;
 
-    console.log(`[${taskId}] Completed successfully`);
+      console.log(`[${taskId}] 🎉 SAFE POINT REACHED!`);
+      console.log(`[${taskId}] - Document is persistent in Supabase Storage`);
+      console.log(`[${taskId}] - Inbox is clean (file deleted from Drive)`);
+      console.log(`[${taskId}] - Safe to retry expensive AI operations`);
 
-    return {
-      stored: true,
-      storagePath: finalStoragePath,
-      deletedFromInbox: true,
-    };
+      console.log(`[${taskId}] Completed successfully`);
+
+      return {
+        stored: true,
+        storagePath: finalStoragePath,
+        deletedFromInbox: true,
+      };
+    } catch (error) {
+      console.error(`[${taskId}] Error during file storage:`, error);
+
+      // Update status to "store_failed"
+      try {
+        await sql`
+          UPDATE income_registry
+          SET status = 'store_failed',
+              error_message = ${error instanceof Error ? error.message : String(error)}
+          WHERE doc_id = ${payload.docId}
+        `;
+      } catch (dbError) {
+        console.error(`[${taskId}] Failed to update error status:`, dbError);
+      }
+
+      throw new Error(`Failed to store file: ${error instanceof Error ? error.message : String(error)}`);
+    }
   },
 });
 
@@ -456,10 +588,10 @@ const extractInvoiceData = task({
     maxTimeoutInMs: 30000,
     randomize: true,
   },
-  run: async (payload: { docId: string; claudeFileUrl: string | null }) => {
+  run: async (payload: { docId: string; claudeFileId: string | null }) => {
     const taskId = "extract-invoice-data";
     console.log(`[${taskId}] Starting extraction for doc: ${payload.docId}`);
-    console.log(`[${taskId}] Claude File URL: ${payload.claudeFileUrl}`);
+    console.log(`[${taskId}] Claude File ID: ${payload.claudeFileId}`);
 
     // Simulate Claude API call for invoice extraction
     console.log(`[${taskId}] Calling Claude with invoice extraction prompt...`);
@@ -533,10 +665,10 @@ const extractStatementData = task({
     maxTimeoutInMs: 30000,
     randomize: true,
   },
-  run: async (payload: { docId: string; claudeFileUrl: string | null }) => {
+  run: async (payload: { docId: string; claudeFileId: string | null }) => {
     const taskId = "extract-statement-data";
     console.log(`[${taskId}] Starting extraction for doc: ${payload.docId}`);
-    console.log(`[${taskId}] Claude File URL: ${payload.claudeFileUrl}`);
+    console.log(`[${taskId}] Claude File ID: ${payload.claudeFileId}`);
 
     // Simulate Claude API call for statement extraction
     console.log(`[${taskId}] Calling Claude with statement extraction prompt...`);
@@ -602,10 +734,10 @@ const extractLetterData = task({
     maxTimeoutInMs: 30000,
     randomize: true,
   },
-  run: async (payload: { docId: string; claudeFileUrl: string | null }) => {
+  run: async (payload: { docId: string; claudeFileId: string | null }) => {
     const taskId = "extract-letter-data";
     console.log(`[${taskId}] Starting extraction for doc: ${payload.docId}`);
-    console.log(`[${taskId}] Claude File URL: ${payload.claudeFileUrl}`);
+    console.log(`[${taskId}] Claude File ID: ${payload.claudeFileId}`);
 
     // Simulate Claude API call for letter extraction
     console.log(`[${taskId}] Calling Claude with letter extraction prompt...`);
@@ -692,8 +824,16 @@ const storeMetadata = task({
     console.log(`[${taskId}] Has Extracted Data: ${!!payload.extractedData}`);
     console.log(`[${taskId}] Has Extraction Error: ${!!payload.extractionError}`);
 
-    // Simulate status update
-    console.log(`[${taskId}] Updating registry status to "saving_metadata"...`);
+    const sql = getDb();
+
+    try {
+      // Update status to "saving_metadata"
+      console.log(`[${taskId}] Updating registry status to "saving_metadata"...`);
+      await sql`
+        UPDATE income_registry
+        SET status = 'saving_metadata'
+        WHERE doc_id = ${payload.docId}
+      `;
 
     let jsonStoragePath: string | null = null;
 
@@ -740,9 +880,19 @@ const storeMetadata = task({
       finalStatus = "processed";
     }
 
-    console.log(`[${taskId}] - status: "${finalStatus}"`);
-    console.log(`[${taskId}] - processed_at: ${new Date().toISOString()}`);
-    console.log(`[${taskId}] ✓ Registry updated successfully`);
+      console.log(`[${taskId}] - status: "${finalStatus}"`);
+      console.log(`[${taskId}] - processed_at: ${new Date().toISOString()}`);
+
+      // Update registry with final status and metadata
+      await sql`
+        UPDATE income_registry
+        SET status = ${finalStatus},
+            storage_path_json = ${jsonStoragePath},
+            error_message = ${payload.extractionError || null},
+            processed_at = NOW()
+        WHERE doc_id = ${payload.docId}
+      `;
+      console.log(`[${taskId}] ✓ Registry updated successfully`);
 
     // STEP 3: Insert to type-specific table (if we have extracted data)
     if (payload.extractedData && finalStatus === "processed") {
@@ -772,13 +922,30 @@ const storeMetadata = task({
       console.log(`[${taskId}] Skipping type-specific table insert (status: ${finalStatus})`);
     }
 
-    console.log(`[${taskId}] Completed successfully`);
+      console.log(`[${taskId}] Completed successfully`);
 
-    return {
-      registryId: `reg_${payload.docId}`,
-      status: finalStatus,
-      jsonStoragePath: jsonStoragePath || undefined,
-    };
+      return {
+        registryId: `reg_${payload.docId}`,
+        status: finalStatus,
+        jsonStoragePath: jsonStoragePath || undefined,
+      };
+    } catch (error) {
+      console.error(`[${taskId}] Error during metadata storage:`, error);
+
+      // Update status to "metadata_storage_failed"
+      try {
+        await sql`
+          UPDATE income_registry
+          SET status = 'metadata_storage_failed',
+              error_message = ${error instanceof Error ? error.message : String(error)}
+          WHERE doc_id = ${payload.docId}
+        `;
+      } catch (dbError) {
+        console.error(`[${taskId}] Failed to update error status:`, dbError);
+      }
+
+      throw new Error(`Failed to store metadata: ${error instanceof Error ? error.message : String(error)}`);
+    }
   },
 });
 
