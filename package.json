@@ -19,6 +19,7 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@trigger.dev/sdk": "4.0.4"
+    "@trigger.dev/sdk": "4.0.4",
+    "zod": "^4.1.11"
   }
 }
