@@ -25,7 +25,7 @@ Contains all 8 worker tasks (hidden, not exported for external use):
 
 - **`registerDocument`** ✅ - Creates initial registry entry (IMPLEMENTED with Postgres)
 - **`downloadAndPrepare`** ✅ - Downloads from Google Drive, uploads to Supabase inbox (IMPLEMENTED - Stateless)
-- **`classifyDocument`** 🔲 - Reads from inbox, classifies using Claude AI (Mock)
+- **`classifyDocument`** ✅ - Reads from inbox, classifies using Claude AI (IMPLEMENTED - Real API)
 - **`storeFile`** 🔲 - Moves from inbox to permanent location, deletes from both inboxes (Mock - SAFE POINT)
 - **`extractInvoiceData`** 🔲 - Extracts structured invoice data (Mock)
 - **`extractStatementData`** 🔲 - Extracts structured bank statement data (Mock)
@@ -71,7 +71,19 @@ Supabase Storage (S3) client utility:
 - `downloadFile()` - Download file as Buffer
 - `deleteFile()` - Delete file from storage
 
-### 6. `/trigger/README.md`
+### 6. `/trigger/claude.ts` ✅ NEW
+
+Claude API client utility:
+
+- Singleton Anthropic client with API key authentication
+- `uploadFileToClaude()` - Upload file to Claude Files API
+- `classifyDocument()` - Classify document with exact n8n workflow prompt
+  - Model: claude-3-5-haiku-20241022
+  - Max tokens: 256
+  - Returns: document_type, confidence, reasoning
+  - Cleans markdown formatting from responses
+
+### 7. `/trigger/README.md`
 
 Complete documentation covering:
 - Architecture and task structure
@@ -114,7 +126,7 @@ Output: {
 |---------|---------|-------|-----------|--------|
 | `register-document` | Create registry entry | 3 | ✅ Yes | ✅ **IMPLEMENTED** |
 | `download-and-prepare` | Download from Drive, upload to inbox | 5 | ✅ Yes | ✅ **IMPLEMENTED** (Stateless) |
-| `classify-document` | Read from inbox, classify type | 10 | ❌ No (defaults to "unknown") | 🔲 Mock |
+| `classify-document` | Read from inbox, classify type | 10 | ❌ No (defaults to "unknown") | ✅ **IMPLEMENTED** (Real API) |
 | `store-file` | Move to permanent location, delete inboxes | 5 | ✅ Yes (SAFE POINT) | 🔲 Mock |
 | `extract-invoice-data` | Extract invoice data | 10 | ❌ No | 🔲 Mock |
 | `extract-statement-data` | Extract statement data | 10 | ❌ No | 🔲 Mock |
@@ -233,11 +245,23 @@ This is the critical checkpoint that allows the workflow to be resilient and cos
 - ✅ Inbox folder pattern implemented
 - ✅ File storage utilities ready for all tasks
 
+#### Claude API Integration
+- ✅ **`classifyDocument` task** - Real Claude API implementation
+  - Downloads file from Supabase inbox folder
+  - Uploads to Claude Files API
+  - Classifies using exact n8n workflow prompt
+  - Model: claude-3-5-haiku-20241022
+  - Max tokens: 256
+  - Applies 0.8 confidence threshold
+  - Defaults to "unknown" on failure (non-fatal)
+  - Cleans markdown formatting from responses
+- ✅ Claude client singleton (`trigger/claude.ts`)
+- ✅ File upload and classification utilities
+
 ### In Progress 🚧
 
-- 🔲 `classifyDocument` - Claude API integration (needs to read from inbox)
 - 🔲 `storeFile` - Move from inbox to permanent location, delete from both inboxes
-- 🔲 `extract*Data` tasks - Claude API integration
+- 🔲 `extract*Data` tasks - Claude API integration (invoice, statement, letter)
 - 🔲 `storeMetadata` - Supabase DB updates + JSON storage
 
 ### Not Started ❌
@@ -453,11 +477,22 @@ TRIGGER_DEV_ENDPOINT=
 - Created utility modules: `drive.ts` and `storage.ts`
 - **Key Architectural Improvement:** No state held in task outputs - all files in external storage
 
+✅ **Third Real Integration: `classifyDocument` (Claude API)**
+- Downloads file from Supabase Storage inbox: `inbox/{docId}.pdf`
+- Uploads to Claude Files API using `@anthropic-ai/sdk`
+- Classifies using exact prompt from n8n workflow prototype
+- Model: claude-3-5-haiku-20241022, Max tokens: 256
+- Applies 0.8 confidence threshold (matches n8n)
+- Non-fatal errors: defaults to "unknown" type
+- Cleans markdown formatting from Claude responses
+- Created utility module: `claude.ts`
+- **Production-Ready:** Matches proven n8n implementation
+
 🚧 **Next Steps**
 1. ✅ ~~Implement `downloadAndPrepare` with Google Drive API~~ **DONE**
-2. Implement `classifyDocument` with Claude API (read from inbox folder)
-3. Implement `storeFile` - move from inbox to permanent location
-4. Implement extraction tasks with Claude API
+2. ✅ ~~Implement `classifyDocument` with Claude API~~ **DONE**
+3. Implement `storeFile` - move from inbox to permanent location, delete both inboxes
+4. Implement extraction tasks with Claude API (invoice, statement, letter)
 5. Implement `storeMetadata` with Supabase DB
 
-The foundation is solid and production-ready. The stateless architecture (inbox pattern) allows all subsequent tasks to read from storage, eliminating the need to pass large data between tasks and enabling efficient retries.
+The foundation is solid and production-ready. The stateless architecture (inbox pattern) allows all subsequent tasks to read from storage, eliminating the need to pass large data between tasks and enabling efficient retries. Classification is now using real Claude API matching the proven n8n workflow.
