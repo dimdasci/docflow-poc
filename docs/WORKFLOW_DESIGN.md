@@ -14,7 +14,9 @@ This document describes the complete workflow for automated document processing 
 3. **Failure Isolation**: Each API boundary has independent retry logic to avoid expensive re-computation
 4. **Early Registration**: Documents registered immediately to prevent loss
 5. **Idempotent Operations**: Storage operations use upserts for safe retries
-6. **POC Scope**: JSONB columns for nested data (line items, transactions) to simplify implementation
+6. **Stateless Tasks**: No large data (Buffers) passed in task outputs - all files stored in external storage immediately
+7. **Inbox Pattern**: Files uploaded to inbox folder first, then moved to permanent location after classification
+8. **POC Scope**: JSONB columns for nested data (line items, transactions) to simplify implementation
 
 ## High-Level Flow
 
@@ -25,14 +27,18 @@ Cron Job (Google Drive Watcher)
 
 process-document-workflow (Orchestrator)
   ├─> 0. register-document        [Supabase DB] - Create registry entry
-  ├─> 1. download-and-prepare     [Google Drive] - Download file from inbox
-  ├─> 2. classify-document        [Claude API] - Classify document type
-  ├─> 3. store-file               [Supabase Storage + Google Drive] - Upload to Supabase, delete from inbox (SAFE POINT!)
+  ├─> 1. download-and-prepare     [Google Drive → Supabase inbox] - Download and upload to inbox/{docId}.pdf
+  ├─> 2. classify-document        [Supabase Storage → Claude API] - Read from inbox, classify document type
+  ├─> 3. store-file               [Supabase Storage + Google Drive] - Move to permanent location, delete from inboxes (SAFE POINT!)
   ├─> 4. extract-document-data    [Claude API] - Extract structured data (type-specific)
   └─> 5. store-metadata           [Supabase DB] - Save extracted data to database
 
-If any step fails: registry updated with error status
-File is safe once uploaded to Supabase Storage (step 3)
+Key Architecture Improvements:
+- Step 1: File immediately uploaded to Supabase inbox (stateless tasks begin here)
+- Step 2+: All tasks read from Supabase Storage, never pass Buffers in task outputs
+- Step 3: Moves file from inbox/{docId}.pdf to {type}/{year}/{month}/{docId}.pdf
+- After Step 3: Both Google Drive inbox AND Supabase inbox are cleaned
+- File is safe once in permanent location (step 3 - SAFE POINT)
 ```
 
 ## Task Definitions
@@ -71,9 +77,9 @@ Failure: Critical - throw error to prevent document loss
 
 ### Task 1: `download-and-prepare`
 
-**Purpose:** Download file from Google Drive and prepare for processing
+**Purpose:** Download file from Google Drive and upload to Supabase Storage inbox (stateless operation)
 
-**API Dependencies:** Google Drive API
+**API Dependencies:** Google Drive API, Supabase Storage (S3)
 
 ```typescript
 Input:  {
@@ -85,13 +91,16 @@ Input:  {
 
 Actions:
   - Validate mimeType (must be "application/pdf")
-  - Download file from Google Drive
-  - Convert to Buffer
+  - Download file from Google Drive as Buffer
+  - Upload file to Supabase Storage inbox folder: `inbox/{docId}.pdf`
+  - Store original filename in object metadata
   - Update registry status: "downloading"
 
 Output: {
-  fileBuffer: Buffer,
-  metadata: FileMetadata
+  storagePath: string,      // inbox/{docId}.pdf
+  storageUrl: string,       // Full S3 URL
+  metadata: FileMetadata,
+  md5Checksum: string       // From Google Drive
 }
 
 Retry:  5 attempts (Google API can be flaky)
@@ -99,6 +108,12 @@ Failure:
   - Update registry status: "download_failed"
   - Store error details
   - Stop workflow
+
+Key Improvement:
+  - No state held in task (no Buffer in output)
+  - File immediately stored in external storage (Supabase S3)
+  - Enables stateless retries - subsequent tasks read from storage
+  - Inbox folder acts as staging area before classification
 ```
 
 **Status Transitions:** `new` → `downloading` → `downloaded` | `download_failed`
@@ -107,18 +122,19 @@ Failure:
 
 ### Task 2: `classify-document`
 
-**Purpose:** Classify document type using Claude AI
+**Purpose:** Classify document type using Claude AI (stateless - reads from storage)
 
-**API Dependencies:** Claude API (Anthropic)
+**API Dependencies:** Claude API (Anthropic), Supabase Storage (S3)
 
 ```typescript
 Input:  {
   docId: string,
-  fileBuffer: Buffer,
+  storagePath: string,       // inbox/{docId}.pdf
   metadata: FileMetadata
 }
 
 Actions:
+  - Download file from Supabase Storage using storagePath
   - Upload file to Claude Files API
   - Call Claude with classification prompt:
     * Categories: invoice, bank_statement, government_letter, unknown
@@ -141,6 +157,11 @@ Failure:
   - Set confidence: 0.0
   - Update registry status: "classification_failed"
   - Continue workflow (still store the file)
+
+Key Improvement:
+  - Reads file from Supabase Storage (not from previous task output)
+  - Fully stateless - can retry without re-downloading from Google Drive
+  - File already safe in inbox folder
 ```
 
 **Status Transitions:** `downloaded` → `classifying` → `classified` | `classification_failed`
@@ -402,22 +423,25 @@ Failure:
 
 ### Task 3: `store-file`
 
-**Purpose:** Upload file to Supabase Storage and delete from Google Drive inbox (SAFE POINT)
+**Purpose:** Move file from inbox to permanent location and delete from Google Drive (SAFE POINT)
 
-**API Dependencies:** Supabase Storage, Google Drive API
+**API Dependencies:** Supabase Storage (S3), Google Drive API
 
 ```typescript
 Input:  {
   docId: string,
   fileId: string,
-  fileBuffer: Buffer,
+  storagePath: string,       // inbox/{docId}.pdf
   fileName: string,
-  documentType: string,  // invoice, bank_statement, government_letter, unknown
+  documentType: string,      // invoice, bank_statement, government_letter, unknown
   metadata: FileMetadata
 }
 
 Actions:
-  1. Determine storage path based on documentType and date:
+  1. Download file from Supabase Storage inbox folder:
+     - Source path: inbox/{docId}.pdf
+
+  2. Determine permanent storage path based on documentType and date:
      - Path: "{type}/{year}/{month}/{docId}.pdf"
      - Examples:
        * invoice/2025/09/abc123.pdf
@@ -425,40 +449,51 @@ Actions:
        * government_letter/2025/09/ghi789.pdf
        * unknown/2025/09/jkl012.pdf
 
-  2. Upload PDF to Supabase Storage:
+  3. Upload PDF to permanent location in Supabase Storage:
      - Bucket: "documents"
-     - Path: {storagePath}
+     - Path: {permanentStoragePath}
      - ContentType: "application/pdf"
 
-  3. Delete file from Google Drive inbox (only if upload succeeds):
+  4. Delete file from inbox folder (Supabase Storage):
+     - Remove: inbox/{docId}.pdf
+
+  5. Delete file from Google Drive inbox (only if upload succeeds):
      - Call Drive API delete on fileId
 
-  4. Update registry:
+  6. Update registry:
      - Set storage_path_pdf
      - Set status: "stored"
      - Record stored_at timestamp
 
 Output: {
   stored: boolean,
-  storagePath: string,
-  deletedFromInbox: boolean
+  storagePath: string,        // Permanent path
+  deletedFromInbox: boolean   // Both Google Drive and Supabase inbox
 }
 
-Retry:  5 attempts (idempotent - Supabase overwrites, Drive delete is idempotent)
+Retry:  5 attempts (idempotent - Supabase overwrites, deletes are idempotent)
 Failure:
   - Update registry status: "store_failed"
-  - Critical error - throw (need file in storage)
-  - File may remain in inbox or be partially uploaded
+  - Critical error - throw (need file in permanent storage)
+  - File may remain in inbox folders
+
+Key Improvement:
+  - Moves file from inbox/{docId}.pdf to {type}/{year}/{month}/{docId}.pdf
+  - Reads from storage (not from task output) - fully stateless
+  - Cleans up both Google Drive inbox AND Supabase inbox folder
+  - After this step: file only exists in permanent location
 ```
 
 **Status Transitions:** `classified` → `storing` → `stored` | `store_failed`
 
-**Why This is Critical (SAFE POINT):** Once file is uploaded to Supabase Storage:
-- ✅ **Document is persistent** - Won't be lost if Drive has issues
-- ✅ **Inbox is clean** - Cron won't reprocess this file
+**Why This is Critical (SAFE POINT):** Once file is moved to permanent location in Supabase Storage:
+- ✅ **Document is persistent** - In permanent, organized location by type
+- ✅ **All inboxes clean** - Both Google Drive and Supabase inbox folders cleaned
+- ✅ **Cron won't reprocess** - File deleted from Google Drive inbox
 - ✅ **Safe to retry extraction** - Can retry expensive AI operations 10+ times
 - ✅ **Manual recovery possible** - File is in permanent storage with known path
-- ✅ **Idempotent** - Can retry this task safely (overwrite + delete are both idempotent)
+- ✅ **Idempotent** - Can retry this task safely (overwrites + deletes are idempotent)
+- ✅ **Stateless** - Reads from inbox storage, not from task output
 
 ---
 
@@ -486,7 +521,7 @@ export const processDocumentWorkflow = task({
     }
     const { docId, registryId } = register.output;
 
-    // STEP 1: Download
+    // STEP 1: Download from Google Drive and upload to Supabase inbox
     const download = await downloadAndPrepare.triggerAndWait({
       docId,
       fileId: payload.fileId,
@@ -503,10 +538,13 @@ export const processDocumentWorkflow = task({
       };
     }
 
-    // STEP 2: Classify
+    // File is now in Supabase Storage inbox: inbox/{docId}.pdf
+    // Subsequent tasks read from storage (stateless)
+
+    // STEP 2: Classify (reads from storage)
     const classify = await classifyDocument.triggerAndWait({
       docId,
-      fileBuffer: download.output.fileBuffer,
+      storagePath: download.output.storagePath,  // inbox/{docId}.pdf
       metadata: download.output.metadata,
     });
 
@@ -519,11 +557,11 @@ export const processDocumentWorkflow = task({
       ? classify.output
       : { documentType: "unknown", confidence: 0, claudeFileUrl: null };
 
-    // STEP 3: Store file to Supabase (SAFE POINT!)
+    // STEP 3: Move file to permanent location (SAFE POINT!)
     const storeFile = await storeFile.triggerAndWait({
       docId,
       fileId: payload.fileId,
-      fileBuffer: download.output.fileBuffer,
+      storagePath: download.output.storagePath,  // inbox/{docId}.pdf
       fileName: payload.fileName,
       documentType,
       metadata: download.output.metadata,
@@ -539,8 +577,8 @@ export const processDocumentWorkflow = task({
       };
     }
 
-    // File is now safe in Supabase Storage!
-    // Inbox is clean (file deleted from Drive)
+    // File is now in permanent location: {type}/{year}/{month}/{docId}.pdf
+    // Both inboxes clean (Google Drive and Supabase inbox folder deleted)
     // We can retry extraction/metadata storage as many times as needed
 
     // STEP 4: Extract (type-specific, skip if unknown/low confidence)
@@ -833,11 +871,13 @@ CREATE INDEX idx_letters_doc_id ON letters(doc_id);
 Structure:
 ```
 documents/
+  ├── inbox/                    [NEW: Staging area before classification]
+  │   └── {docId}.pdf          [Temporary storage during processing]
   ├── invoice/
   │   ├── 2025/
   │   │   ├── 01/
-  │   │   │   ├── {docId}.pdf
-  │   │   │   └── {docId}.json
+  │   │   │   ├── {docId}.pdf  [Permanent location after classification]
+  │   │   │   └── {docId}.json [Metadata/extracted data]
   │   │   └── 02/
   │   └── 2024/
   ├── bank_statement/
@@ -845,10 +885,17 @@ documents/
   └── unknown/
 ```
 
+**Storage Flow:**
+1. **Step 1** (`download-and-prepare`): Upload to `inbox/{docId}.pdf`
+2. **Step 2** (`classify-document`): Read from inbox, classify type
+3. **Step 3** (`store-file`): Move to `{type}/{year}/{month}/{docId}.pdf`, delete inbox file
+4. **Step 5** (`store-metadata`): Upload JSON to `{type}/{year}/{month}/{docId}.json`
+
 Storage Policies:
-- Authenticated read/write for service role
+- Authenticated read/write for service role (S3 credentials)
 - Public read disabled
 - Max file size: 50 MB (configurable)
+- Inbox files are temporary (cleaned up in Step 3)
 
 ## Cron Job Integration
 
@@ -973,19 +1020,29 @@ DRIVE_FOLDER_ID=<inbox_folder_id>  # Only need inbox folder now!
 GOOGLE_CLIENT_EMAIL=
 GOOGLE_PRIVATE_KEY=
 GOOGLE_PROJECT_ID=
-# ... other Google auth vars
+GOOGLE_PRIVATE_KEY_ID=
+GOOGLE_CLIENT_ID=
+GOOGLE_AUTH_URL=
+GOOGLE_TOKEN_URL=
+GOOGLE_AUTH_PROVIDER_X509_CERT_URL=
+GOOGLE_CLIENT_X509_CERT_URL=
+GOOGLE_UNIVERSE_DOMAIN=
 
 # Anthropic
 ANTHROPIC_API_KEY=
 
-# Supabase
-SUPABASE_URL=
-SUPABASE_SERVICE_ROLE_KEY=
+# Supabase Database
+SUPABASE_DB_STRING=         # Transaction Pooler connection string for Postgres
+
+# Supabase Storage (S3-compatible)
+SUPABASE_STORAGE_ACCESS_POINT=     # https://<project-ref>.supabase.co/storage/v1/s3
+SUPABASE_STORAGE_REGION=           # Project region (e.g., us-east-1)
+SUPABASE_STORAGE_ACCESS_KEY_ID=    # S3 access key ID
+SUPABASE_STORAGE_ACCESS_KEY=       # S3 secret access key
 SUPABASE_STORAGE_BUCKET=documents  # Storage bucket name
 
 # Trigger.dev (existing)
-TRIGGER_DEV_API_KEY=
-TRIGGER_DEV_ENDPOINT=
+TRIGGER_SECRET_KEY=
 ```
 
 **Note:** We no longer need separate Drive folder IDs for invoices/statements/letters. Files are stored in Supabase with paths like:
@@ -996,9 +1053,10 @@ TRIGGER_DEV_ENDPOINT=
 
 ---
 
-**Version:** 1.3 (Supabase Storage Migration)
+**Version:** 1.4 (Stateless Task Architecture)
 **Changes:**
 - v1.0: Initial design
 - v1.1: Simplified schema with JSONB columns for line items and transactions
 - v1.2: Move file to destination folder after classification (before extraction) - creates safe checkpoint
 - v1.3: **Corrected architecture** - Upload to Supabase Storage (not Google Drive folders), delete from inbox. Split into `store-file` and `store-metadata` tasks
+- v1.4: **Stateless tasks** - Files uploaded to Supabase inbox immediately in Step 1, all subsequent tasks read from storage (no Buffers in task outputs). Inbox pattern: `inbox/{docId}.pdf` → `{type}/{year}/{month}/{docId}.pdf`
