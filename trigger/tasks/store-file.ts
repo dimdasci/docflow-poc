@@ -2,9 +2,9 @@ import { task } from "@trigger.dev/sdk";
 import { getDb } from "../utils/db";
 import { moveFileToFolder } from "../utils/drive";
 import { copyFile, deleteFile } from "../utils/storage";
-import type { FileMetadata, ClassificationResult } from "../types/domain";
-
-type DocumentType = ClassificationResult["documentType"];
+import { buildDocumentStoragePath } from "../utils/storagePaths";
+import type { FileMetadata } from "../types/domain";
+import type { DocumentType } from "../utils/storagePaths";
 
 // ============================================================================
 // TASK 3: STORE FILE (Hidden - SAFE POINT!)
@@ -35,13 +35,6 @@ export const storeFile = task({
 
     const sql = getDb();
 
-    const folderNameMap: Record<DocumentType, string> = {
-      invoice: "invoices",
-      bank_statement: "statements",
-      government_letter: "letters",
-      unknown: "unknown",
-    };
-
     try {
       // Update status to "storing"
       console.log(`[${taskId}] Updating registry status to "storing"...`);
@@ -53,10 +46,12 @@ export const storeFile = task({
 
       // Determine final storage path
       const now = new Date();
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, "0");
-      const folderName = folderNameMap[payload.documentType] ?? "unknown";
-      const finalStoragePath = `${folderName}/${year}/${month}/${payload.docId}.pdf`;
+      const finalStoragePath = buildDocumentStoragePath({
+        documentType: payload.documentType,
+        docId: payload.docId,
+        extension: "pdf",
+        date: now,
+      });
 
       console.log(
         `[${taskId}] Determined final storage path: ${finalStoragePath}`

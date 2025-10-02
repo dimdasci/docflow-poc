@@ -8,8 +8,8 @@ import type {
   LetterData,
   DocumentStatus,
 } from "../types/domain";
-
-type DocumentType = ClassificationResult["documentType"];
+import { buildDocumentStoragePath } from "../utils/storagePaths";
+import type { DocumentType } from "../utils/storagePaths";
 
 // ============================================================================
 // TASK 5: STORE METADATA (Hidden)
@@ -63,9 +63,12 @@ export const storeMetadata = task({
       // STEP 1: Upload JSON metadata if we have extracted data
       if (payload.extractedData) {
         const now = new Date();
-        const year = now.getFullYear();
-        const month = String(now.getMonth() + 1).padStart(2, "0");
-        jsonStoragePath = `${payload.documentType}/${year}/${month}/${payload.docId}.json`;
+        jsonStoragePath = buildDocumentStoragePath({
+          documentType: payload.documentType,
+          docId: payload.docId,
+          extension: "json",
+          date: now,
+        });
 
         console.log(
           `[${taskId}] Uploading JSON metadata to Supabase Storage...`
