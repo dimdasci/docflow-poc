@@ -9,6 +9,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@trigger.dev/sdk": "^4.0.4",
     "googleapis": "^160.0.0"
   },
   "devDependencies": {
