@@ -41,9 +41,15 @@ export async function downloadFileFromDrive(fileId: string): Promise<Buffer> {
 
     return Buffer.from(response.data as ArrayBuffer);
   } catch (error) {
-    // Simplify error to prevent stack trace explosion with googleapis
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to download file ${fileId}: ${message}`);
+    const summary = summarizeGoogleError(error);
+    console.error(`[drive] downloadFileFromDrive error`, {
+      fileId,
+      code: summary.code,
+      reason: summary.reason,
+      message: summary.message,
+    });
+
+    throw new Error(`Failed to download file ${fileId}: ${summary.message}`);
   }
 }
 
@@ -56,14 +62,23 @@ export async function getFileMetadata(fileId: string) {
   try {
     const response = await drive.files.get({
       fileId: fileId,
-      fields: "id, name, mimeType, size, createdTime, modifiedTime, md5Checksum",
+      fields:
+        "id, name, mimeType, size, createdTime, modifiedTime, md5Checksum",
     });
 
     return response.data;
   } catch (error) {
-    // Simplify error to prevent stack trace explosion with googleapis
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to get metadata for file ${fileId}: ${message}`);
+    const summary = summarizeGoogleError(error);
+    console.error(`[drive] getFileMetadata error`, {
+      fileId,
+      code: summary.code,
+      reason: summary.reason,
+      message: summary.message,
+    });
+
+    throw new Error(
+      `Failed to get metadata for file ${fileId}: ${summary.message}`
+    );
   }
 }
 
@@ -77,24 +92,33 @@ export async function moveFileToFolder(fileId: string, targetFolderId: string) {
     // Get current parents
     const file = await drive.files.get({
       fileId: fileId,
-      fields: 'parents',
+      fields: "parents",
     });
 
-    const previousParents = file.data.parents?.join(',') || '';
+    const previousParents = file.data.parents?.join(",") || "";
 
     // Move the file by removing from current parents and adding to new parent
     await drive.files.update({
       fileId: fileId,
       addParents: targetFolderId,
       removeParents: previousParents,
-      fields: 'id, parents',
+      fields: "id, parents",
     });
 
     return { fileId, moved: true, targetFolderId };
   } catch (error) {
-    // Simplify error to prevent stack trace explosion with googleapis
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to move file ${fileId} to folder ${targetFolderId}: ${message}`);
+    const summary = summarizeGoogleError(error);
+    console.error(`[drive] moveFileToFolder error`, {
+      fileId,
+      targetFolderId,
+      code: summary.code,
+      reason: summary.reason,
+      message: summary.message,
+    });
+
+    throw new Error(
+      `Failed to move file ${fileId} to folder ${targetFolderId}: ${summary.message}`
+    );
   }
 }
 
@@ -112,8 +136,50 @@ export async function deleteFileFromDrive(fileId: string) {
 
     return { fileId, deleted: true };
   } catch (error) {
-    // Simplify error to prevent stack trace explosion with googleapis
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to delete file ${fileId}: ${message}`);
+    const summary = summarizeGoogleError(error);
+    console.error(`[drive] deleteFileFromDrive error`, {
+      fileId,
+      code: summary.code,
+      reason: summary.reason,
+      message: summary.message,
+    });
+
+    throw new Error(`Failed to delete file ${fileId}: ${summary.message}`);
   }
+}
+
+function summarizeGoogleError(error: unknown): {
+  message: string;
+  code?: number | string;
+  reason?: string;
+} {
+  if (error && typeof error === "object") {
+    const anyError = error as Record<string, unknown>;
+    const message =
+      typeof anyError.message === "string" ? anyError.message : String(error);
+    const code = anyError.code as number | string | undefined;
+    const rawReason =
+      Array.isArray(anyError.errors) && anyError.errors.length > 0
+        ? (anyError.errors[0]?.reason ?? anyError.errors[0]?.message)
+        : undefined;
+    const reason =
+      typeof rawReason === "string" && rawReason.length > 0
+        ? rawReason
+        : undefined;
+
+    // Strip heavy axios/google specific properties if present to avoid accidental logging later
+    if ("config" in anyError) {
+      delete (anyError as Record<string, unknown>).config;
+    }
+    if ("request" in anyError) {
+      delete (anyError as Record<string, unknown>).request;
+    }
+    if ("response" in anyError) {
+      delete (anyError as Record<string, unknown>).response;
+    }
+
+    return { message, code, reason };
+  }
+
+  return { message: String(error) };
 }

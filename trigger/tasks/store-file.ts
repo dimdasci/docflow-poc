@@ -35,6 +35,13 @@ export const storeFile = task({
 
     const sql = getDb();
 
+    const folderNameMap: Record<DocumentType, string> = {
+      invoice: "invoices",
+      bank_statement: "statements",
+      government_letter: "letters",
+      unknown: "unknown",
+    };
+
     try {
       // Update status to "storing"
       console.log(`[${taskId}] Updating registry status to "storing"...`);
@@ -48,7 +55,8 @@ export const storeFile = task({
       const now = new Date();
       const year = now.getFullYear();
       const month = String(now.getMonth() + 1).padStart(2, "0");
-      const finalStoragePath = `${payload.documentType}/${year}/${month}/${payload.docId}.pdf`;
+      const folderName = folderNameMap[payload.documentType] ?? "unknown";
+      const finalStoragePath = `${folderName}/${year}/${month}/${payload.docId}.pdf`;
 
       console.log(
         `[${taskId}] Determined final storage path: ${finalStoragePath}`
