@@ -95,6 +95,34 @@ export async function downloadFile(key: string): Promise<Buffer> {
 }
 
 /**
+ * Copy a file within Supabase Storage
+ * Downloads from source and uploads to destination
+ */
+export async function copyFile(sourceKey: string, destinationKey: string): Promise<{ key: string; url: string }> {
+  // Download source file
+  const fileBuffer = await downloadFile(sourceKey);
+
+  // Get metadata from source if available
+  const client = getStorageClient();
+  const bucket = getBucket();
+  const getCommand = new GetObjectCommand({
+    Bucket: bucket,
+    Key: sourceKey,
+  });
+  const sourceResponse = await client.send(getCommand);
+  const contentType = sourceResponse.ContentType || "application/octet-stream";
+  const originalFilename = sourceResponse.Metadata?.['original-filename'];
+
+  // Upload to destination
+  const uploadResult = await uploadFile(destinationKey, fileBuffer, contentType, originalFilename);
+
+  return {
+    key: uploadResult.key,
+    url: uploadResult.url,
+  };
+}
+
+/**
  * Delete a file from Supabase Storage
  */
 export async function deleteFile(key: string) {
