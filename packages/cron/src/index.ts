@@ -31,9 +31,9 @@ async function triggerWorkflow(fileId: string, fileName: string) {
 
 async function checkAndTrigger() {
   // Validate required environment variables
-  const folderId = process.env.DRIVE_FOLDER_ID;
+  const folderId = process.env.DRIVE_INBOX_FOLDER_ID;
   if (!folderId) {
-    throw new Error('DRIVE_FOLDER_ID environment variable is required');
+    throw new Error('DRIVE_INBOX_FOLDER_ID environment variable is required');
   }
 
   // Authenticate with Google Drive using service account credentials from env vars
@@ -43,16 +43,11 @@ async function checkAndTrigger() {
         keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
         scopes: ['https://www.googleapis.com/auth/drive.readonly'],
       })
-    : new google.auth.GoogleAuth({
-        credentials: {
-          type: 'service_account',
-          project_id: process.env.GOOGLE_PROJECT_ID,
-          private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID,
-          private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-          client_email: process.env.GOOGLE_CLIENT_EMAIL,
-          client_id: process.env.GOOGLE_CLIENT_ID
-        },
+    : new google.auth.JWT({
+        email: process.env.GOOGLE_CLIENT_EMAIL,
+        key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
         scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+        keyId: process.env.GOOGLE_PRIVATE_KEY_ID,
       });
 
   const drive = google.drive({ version: 'v3', auth });
