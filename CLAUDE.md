@@ -1,24 +1,33 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this
+repository.
 
 ## Project Overview
 
-This is a proof-of-concept for document flow automation, structured as a pnpm monorepo with TypeScript.
+This is a proof-of-concept for document flow automation, structured as a pnpm monorepo with
+TypeScript.
 
-The project implements a cron/scheduling package to watch a Google Drive folder for new documents and trigger the processing flow using trigger.dev tasks. 
+The project implements a cron/scheduling package to watch a Google Drive folder for new documents
+and trigger the processing flow using trigger.dev tasks.
 
-Project uses Google Service Account for authentication and the Folder to watch in environment variables.
+Project uses Google Service Account for authentication and the Folder to watch in environment
+variables.
 
-When new documents are detected (the job of cron), they are processed in a following order (the job of trigger.dev tasks):
+When new documents are detected (the job of cron), they are processed in a following order (the job
+of trigger.dev tasks):
+
 - download document and retrieve metadata (name, mimetype, size, created time)
 - classify document type (invoice, statement, letter, unsupported) by:
   - validating if the document mimetype is supported (PDF, DOCX, JPG, PNG),
-  - classifying document type using an LLM model (e.g. Claude, GPT-4) 
-- upload document to Supabase storage bucket into a folder based on document type, add a record to Supabase income registry table with metadata, storage path, and processing status (e.g. uploaded, classified, rejected, processed, error)
-- Based on document type, run data extraction using an LLM model (e.g. Claude, GPT-4) to 
+  - classifying document type using an LLM model (e.g. Claude, GPT-4)
+- upload document to Supabase storage bucket into a folder based on document type, add a record to
+  Supabase income registry table with metadata, storage path, and processing status (e.g. uploaded,
+  classified, rejected, processed, error)
+- Based on document type, run data extraction using an LLM model (e.g. Claude, GPT-4) to
   - extract structured data (e.g. invoice details and line items),
-  - save the extracted data to a corresponding Supabase table (e.g. invoices) and Supabase object metadata too,
+  - save the extracted data to a corresponding Supabase table (e.g. invoices) and Supabase object
+    metadata too,
   - update the income registry record with processing status (e.g. processed, error)
 
 ## Project Structure
@@ -41,7 +50,8 @@ doc-flow-poc/
 ## Package Management
 
 - **Package Manager**: pnpm (v10.13.1)
-- **Workspace**: Monorepo structure with packages in `packages/` directory and tasks definitions in `trigger/`
+- **Workspace**: Monorepo structure with packages in `packages/` directory and tasks definitions in
+  `trigger/`
 - Install dependencies: `pnpm install`
 
 ## TypeScript Configuration
@@ -59,6 +69,7 @@ doc-flow-poc/
 A cron/scheduling package for the document flow system.
 
 **Commands**:
+
 - `pnpm dev` - Run in development mode with watch (using tsx)
 - `pnpm build` - Compile TypeScript to JavaScript
 - `pnpm start` - Run compiled JavaScript from dist/
@@ -69,37 +80,39 @@ A cron/scheduling package for the document flow system.
 2. Each package has its own TypeScript configuration and build output
 3. The `cron` package is currently empty/scaffolded but configured for development
 
-
 ## Deployment
 
-Cron service must be deployed to a Railway service as a github integration. The service setup and integration is done manually. Service implementation must satisfy Railway requirements to cron services (see Railway documentation).
-
+Cron service must be deployed to a Railway service as a github integration. The service setup and
+integration is done manually. Service implementation must satisfy Railway requirements to cron
+services (see Railway documentation).
 
 ## Environment Variables
 
-- DRIVE_FOLDER_ID -- ID of the Google Drive folder to monitor
-- GOOGLE_AUTH_PROVIDER_X509_CERT_URL -- URL for Google auth provider certs
-- GOOGLE_AUTH_URL -- Google OAuth2 auth URL
+- DRIVE_INBOX_FOLDER_ID -- ID of the Google Drive inbox folder to monitor
+- DRIVE_PROCESSED_FOLDER_ID -- ID of the Google Drive folder for processed files
 - GOOGLE_CLIENT_EMAIL -- Service account email
 - GOOGLE_CLIENT_ID -- Service account client ID
-- GOOGLE_CLIENT_X509_CERT_URL -- Service account X.509 cert URL
 - GOOGLE_PRIVATE_KEY -- Service account private key (handle newlines properly)
 - GOOGLE_PRIVATE_KEY_ID -- Service account private key ID
 - GOOGLE_PROJECT_ID -- Project ID
-- GOOGLE_TOKEN_URL -- Google auth token URL
-- GOOGLE_UNIVERSE_DOMAIN -- Google universe domain
 - TRIGGER_SECRET_KEY -- Trigger.dev API key
 - SUPABASE_DB_STRING -- Supabase connection string
+- ANTHROPIC_API_KEY -- Anthropic API key for Claude
+- SUPABASE_STORAGE_ACCESS_POINT -- Supabase storage access point URL
+- SUPABASE_STORAGE_REGION -- Supabase storage region
+- SUPABASE_STORAGE_ACCESS_KEY_ID -- Supabase storage access key ID
+- SUPABASE_STORAGE_ACCESS_KEY -- Supabase storage access key
+- SUPABASE_STORAGE_BUCKET -- Supabase storage bucket
 
-## References 
+## References
 
 - [Trigger.dev Documentation](https://trigger.dev/docs/introduction)
 - [Google Drive API](https://developers.google.com/drive/api)
 - [Railway Cron Jobs Reference](https://docs.railway.com/reference/cron-jobs)
 - [Railway Cron Jobs Guide](https://docs.railway.com/guides/cron-jobs)
 
-
 <!-- TRIGGER.DEV basic START -->
+
 # Trigger.dev Basic Tasks (v4)
 
 **MUST use `@trigger.dev/sdk` (v4), NEVER `client.defineJob`**
@@ -139,7 +152,7 @@ export const validatedTask = schemaTask({
     age: z.number(),
     email: z.string().email(),
   }),
-  run: async (payload) => {
+  run: async payload => {
     // Payload is automatically validated and typed
     return { message: `Hello ${payload.name}, age ${payload.age}` };
   },
@@ -155,7 +168,7 @@ const dailyReport = schedules.task({
   id: "daily-report",
   cron: "0 9 * * *", // Daily at 9:00 AM UTC
   // or with timezone: cron: { pattern: "0 9 * * *", timezone: "America/New_York" },
-  run: async (payload) => {
+  run: async payload => {
     console.log("Scheduled run at:", payload.timestamp);
     console.log("Last run was:", payload.lastTimestamp);
     console.log("Next 5 runs:", payload.upcoming);
@@ -192,7 +205,7 @@ const batchHandle = await tasks.batchTrigger<typeof processData>("process-data",
 ```ts
 export const parentTask = task({
   id: "parent-task",
-  run: async (payload) => {
+  run: async payload => {
     // Trigger and continue
     const handle = await childTask.trigger({ data: "value" });
 
@@ -231,7 +244,8 @@ export const childTask = task({
 });
 ```
 
-> Never wrap triggerAndWait or batchTriggerAndWait calls in a Promise.all or Promise.allSettled as this is not supported in Trigger.dev tasks.
+> Never wrap triggerAndWait or batchTriggerAndWait calls in a Promise.all or Promise.allSettled as
+> this is not supported in Trigger.dev tasks.
 
 ## Waits
 
@@ -240,7 +254,7 @@ import { task, wait } from "@trigger.dev/sdk";
 
 export const taskWithWaits = task({
   id: "task-with-waits",
-  run: async (payload) => {
+  run: async payload => {
     console.log("Starting task");
 
     // Wait for specific duration
@@ -264,11 +278,13 @@ export const taskWithWaits = task({
 });
 ```
 
-> Never wrap wait calls in a Promise.all or Promise.allSettled as this is not supported in Trigger.dev tasks.
+> Never wrap wait calls in a Promise.all or Promise.allSettled as this is not supported in
+> Trigger.dev tasks.
 
 ## Key Points
 
-- **Result vs Output**: `triggerAndWait()` returns a `Result` object with `ok`, `output`, `error` properties - NOT the direct task output
+- **Result vs Output**: `triggerAndWait()` returns a `Result` object with `ok`, `output`, `error`
+  properties - NOT the direct task output
 - **Type safety**: Use `import type` for task references when triggering from backend
 - **Waits > 5 seconds**: Automatically checkpointed, don't count toward compute usage
 
@@ -289,6 +305,7 @@ Use v4 SDK (`@trigger.dev/sdk`), check `result.ok` before accessing `result.outp
 <!-- TRIGGER.DEV basic END -->
 
 <!-- TRIGGER.DEV config START -->
+
 # Trigger.dev Configuration (v4)
 
 **Complete guide to configuring `trigger.config.ts` with build extensions**
@@ -499,7 +516,7 @@ extensions: [
 import { syncEnvVars } from "@trigger.dev/build/extensions/core";
 
 extensions: [
-  syncEnvVars(async (ctx) => {
+  syncEnvVars(async ctx => {
     // ctx contains: environment, projectRef, env
     return [
       { name: "SECRET_KEY", value: await getSecret(ctx.environment) },
@@ -535,11 +552,11 @@ import { defineConfig } from "@trigger.dev/sdk";
 const customExtension = {
   name: "my-custom-extension",
 
-  externalsForTarget: (target) => {
+  externalsForTarget: target => {
     return ["some-native-module"]; // Add external dependencies
   },
 
-  onBuildStart: async (context) => {
+  onBuildStart: async context => {
     console.log(`Build starting for ${context.target}`);
     // Register esbuild plugins, modify build context
   },
@@ -599,7 +616,7 @@ export default defineConfig({
 extensions: [
   prismaExtension({ schema: "prisma/schema.prisma", migrate: true }),
   additionalFiles({ files: ["./public/**", "./assets/**"] }),
-  syncEnvVars(async (ctx) => [...envVars]),
+  syncEnvVars(async ctx => [...envVars]),
 ];
 ```
 
@@ -634,6 +651,7 @@ extensions: [
 - **File paths**: Use glob patterns for flexible file inclusion
 - **Debug builds**: Use `--log-level debug --dry-run` for troubleshooting
 
-Extensions only affect deployment, not local development. Use `external` array for packages that shouldn't be bundled.
+Extensions only affect deployment, not local development. Use `external` array for packages that
+shouldn't be bundled.
 
 <!-- TRIGGER.DEV config END -->
