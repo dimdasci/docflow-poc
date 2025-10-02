@@ -14,6 +14,8 @@ import type {
   WorkflowOutput,
   ClassificationResult,
 } from "./types/domain";
+import { getLangfuseClient } from "./utils/langfuse";
+import { flushLangfuseTracing } from "./utils/langfuseInstrumentation";
 
 type DocumentType = ClassificationResult["documentType"];
 
@@ -90,9 +92,13 @@ export const processDocumentWorkflow = task({
     }
 
     const { docId, registryId } = register.output;
+
     console.log(`[${orchestratorId}] ✅ Document registered successfully`);
     console.log(`[${orchestratorId}] - Registry ID: ${registryId}`);
     console.log(`[${orchestratorId}] - Doc ID: ${docId}\n`);
+
+    // Create root trace span for the entire workflow using OpenTelemetry API
+    const langfuseTraceId = docId;
 
     // ========================================================================
     // STEP 1: Download file from Google Drive
@@ -145,6 +151,7 @@ export const processDocumentWorkflow = task({
         docId,
         storagePath: download.output.storagePath,
         metadata: download.output.metadata,
+        langfuseTraceId,
       },
       { idempotencyKey, idempotencyKeyTTL: IDEMPOTENCY_KEY_TTL }
     );
@@ -235,6 +242,7 @@ export const processDocumentWorkflow = task({
               docId,
               claudeFileId,
               fileName: payload.fileName,
+              langfuseTraceId,
             },
             { idempotencyKey, idempotencyKeyTTL: IDEMPOTENCY_KEY_TTL }
           );
@@ -257,6 +265,7 @@ export const processDocumentWorkflow = task({
               docId,
               claudeFileId,
               fileName: payload.fileName,
+              langfuseTraceId,
             },
             { idempotencyKey, idempotencyKeyTTL: IDEMPOTENCY_KEY_TTL }
           );
@@ -281,6 +290,7 @@ export const processDocumentWorkflow = task({
               docId,
               claudeFileId,
               fileName: payload.fileName,
+              langfuseTraceId,
             },
             { idempotencyKey, idempotencyKeyTTL: IDEMPOTENCY_KEY_TTL }
           );
@@ -371,7 +381,7 @@ export const processDocumentWorkflow = task({
     );
     console.log(`${"=".repeat(80)}\n`);
 
-    return {
+    const workflowOutput = {
       status: metadataResult.output.status,
       documentType,
       confidence,
@@ -382,5 +392,10 @@ export const processDocumentWorkflow = task({
       inboxCleaned: storeResult.output.deletedFromInbox ?? false,
       error: undefined,
     };
+
+    // Flush Langfuse traces before returning
+    await flushLangfuseTracing();
+
+    return workflowOutput;
   },
 });

@@ -42,7 +42,10 @@ export const extractInvoiceData = task({
 
       const invoiceData = await claudeExtractInvoice(
         payload.claudeFileId,
-        payload.fileName
+        payload.fileName,
+        payload.langfuseTraceId
+          ? { traceId: payload.langfuseTraceId }
+          : undefined
       );
 
       console.log(`[${taskId}] ✓ Extraction completed successfully`);
@@ -97,7 +100,10 @@ export const extractStatementData = task({
 
       const statementData = await claudeExtractStatement(
         payload.claudeFileId,
-        payload.fileName
+        payload.fileName,
+        payload.langfuseTraceId
+          ? { traceId: payload.langfuseTraceId }
+          : undefined
       );
 
       console.log(`[${taskId}] ✓ Extraction completed successfully`);
@@ -160,7 +166,10 @@ export const extractLetterData = task({
 
       const letterData = await claudeExtractLetter(
         payload.claudeFileId,
-        payload.fileName
+        payload.fileName,
+        payload.langfuseTraceId
+          ? { traceId: payload.langfuseTraceId }
+          : undefined
       );
 
       console.log(`[${taskId}] ✓ Extraction completed successfully`);

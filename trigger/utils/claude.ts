@@ -1,6 +1,54 @@
 import Anthropic, { toFile } from "@anthropic-ai/sdk";
 import { getLangfuseClient } from "./langfuse";
 import { startObservation } from "@langfuse/tracing";
+import { randomBytes } from "node:crypto";
+
+type LangfusePromptAttributes = {
+  name: string;
+  version: number;
+  isFallback: boolean;
+};
+
+type ObservationOptions = {
+  traceId?: string;
+  parentSpanId?: string;
+};
+
+function toLangfusePromptAttributes(prompt: {
+  name: string;
+  version: number;
+  isFallback?: boolean;
+  labels?: string[];
+}): LangfusePromptAttributes {
+  const inferredFallback = Array.isArray(prompt.labels)
+    ? prompt.labels.includes("fallback")
+    : false;
+
+  return {
+    name: prompt.name,
+    version: prompt.version,
+    isFallback:
+      typeof prompt.isFallback === "boolean"
+        ? prompt.isFallback
+        : inferredFallback,
+  };
+}
+
+function randomSpanId() {
+  return randomBytes(8).toString("hex");
+}
+
+function buildParentSpanContext(options?: ObservationOptions) {
+  if (!options?.traceId) {
+    return undefined;
+  }
+
+  return {
+    traceId: options.traceId,
+    spanId: options.parentSpanId ?? randomSpanId(),
+    traceFlags: 1,
+  };
+}
 
 // Create a singleton Anthropic client
 let claudeClient: Anthropic | null = null;
@@ -51,7 +99,8 @@ export async function uploadFileToClaude(
  */
 export async function classifyDocument(
   fileId: string,
-  fileName: string
+  fileName: string,
+  options?: ObservationOptions
 ): Promise<{
   document_type: "invoice" | "bank_statement" | "government_letter" | "unknown";
   confidence: number;
@@ -71,20 +120,24 @@ export async function classifyDocument(
   const maxTokens = config?.max_tokens || 256;
   const temperature = config?.temperature || 0;
 
+  const parentSpanContext = buildParentSpanContext(options);
+
   // Create generation observation
   const generation = startObservation(
     "classify-document",
     {
       model,
-      input: { query: promptText },
+      input: promptText,
       modelParameters: { maxTokens, temperature },
       metadata: {
         promptName: "poc-3f/classify",
         promptVersion: langfusePrompt.version,
         fileName,
+        fileId,
       },
+      prompt: toLangfusePromptAttributes(langfusePrompt),
     },
-    { asType: "generation" }
+    { asType: "generation", parentSpanContext }
   );
 
   try {
@@ -114,9 +167,9 @@ export async function classifyDocument(
       betas: ["files-api-2025-04-14"],
     });
 
-    // Update generation with results
+    // Update generation with raw LLM response
     generation.update({
-      output: { content: response.content },
+      output: response.content,
       usageDetails: {
         input: response.usage.input_tokens,
         output: response.usage.output_tokens,
@@ -128,7 +181,7 @@ export async function classifyDocument(
 
     generation.end();
 
-    // Extract the text response
+    // Extract the text response for processing
     const textContent = response.content.find(block => block.type === "text");
     if (!textContent || textContent.type !== "text") {
       throw new Error("No text response from Claude");
@@ -166,7 +219,8 @@ export async function classifyDocument(
  */
 export async function extractInvoice(
   fileId: string,
-  fileName: string
+  fileName: string,
+  options?: ObservationOptions
 ): Promise<any> {
   const langfuse = getLangfuseClient();
   const client = getClaudeClient();
@@ -182,20 +236,24 @@ export async function extractInvoice(
   const maxTokens = config?.max_tokens || 2048;
   const temperature = config?.temperature || 0;
 
+  const parentSpanContext = buildParentSpanContext(options);
+
   // Create generation observation
   const generation = startObservation(
     "extract-invoice",
     {
       model,
-      input: { query: promptText },
+      input: promptText,
       modelParameters: { maxTokens, temperature },
       metadata: {
         promptName: "poc-3f/invoice",
         promptVersion: langfusePrompt.version,
         fileName,
+        fileId,
       },
+      prompt: toLangfusePromptAttributes(langfusePrompt),
     },
-    { asType: "generation" }
+    { asType: "generation", parentSpanContext }
   );
 
   try {
@@ -224,9 +282,9 @@ export async function extractInvoice(
       betas: ["files-api-2025-04-14"],
     });
 
-    // Update generation with results
+    // Update generation with raw LLM response
     generation.update({
-      output: { content: response.content },
+      output: response.content,
       usageDetails: {
         input: response.usage.input_tokens,
         output: response.usage.output_tokens,
@@ -271,7 +329,8 @@ export async function extractInvoice(
  */
 export async function extractStatement(
   fileId: string,
-  fileName: string
+  fileName: string,
+  options?: ObservationOptions
 ): Promise<any> {
   const langfuse = getLangfuseClient();
   const client = getClaudeClient();
@@ -286,20 +345,24 @@ export async function extractStatement(
   const maxTokens = config?.max_tokens || 2048;
   const temperature = config?.temperature || 0;
 
+  const parentSpanContext = buildParentSpanContext(options);
+
   // Create generation observation
   const generation = startObservation(
     "extract-statement",
     {
       model,
-      input: { query: promptText },
+      input: promptText,
       modelParameters: { maxTokens, temperature },
       metadata: {
         promptName: "poc-3f/statement",
         promptVersion: langfusePrompt.version,
         fileName,
+        fileId,
       },
+      prompt: toLangfusePromptAttributes(langfusePrompt),
     },
-    { asType: "generation" }
+    { asType: "generation", parentSpanContext }
   );
 
   try {
@@ -328,9 +391,9 @@ export async function extractStatement(
       betas: ["files-api-2025-04-14"],
     });
 
-    // Update generation with results
+    // Update generation with raw LLM response
     generation.update({
-      output: { content: response.content },
+      output: response.content,
       usageDetails: {
         input: response.usage.input_tokens,
         output: response.usage.output_tokens,
@@ -375,7 +438,8 @@ export async function extractStatement(
  */
 export async function extractLetter(
   fileId: string,
-  fileName: string
+  fileName: string,
+  options?: ObservationOptions
 ): Promise<any> {
   const langfuse = getLangfuseClient();
   const client = getClaudeClient();
@@ -390,20 +454,24 @@ export async function extractLetter(
   const maxTokens = config?.max_tokens || 2048;
   const temperature = config?.temperature || 0;
 
+  const parentSpanContext = buildParentSpanContext(options);
+
   // Create generation observation
   const generation = startObservation(
     "extract-letter",
     {
       model,
-      input: { query: promptText },
+      input: promptText,
       modelParameters: { maxTokens, temperature },
       metadata: {
         promptName: "poc-3f/letters",
         promptVersion: langfusePrompt.version,
         fileName,
+        fileId,
       },
+      prompt: toLangfusePromptAttributes(langfusePrompt),
     },
-    { asType: "generation" }
+    { asType: "generation", parentSpanContext }
   );
 
   try {
@@ -432,9 +500,9 @@ export async function extractLetter(
       betas: ["files-api-2025-04-14"],
     });
 
-    // Update generation with results
+    // Update generation with raw LLM response
     generation.update({
-      output: { content: response.content },
+      output: response.content,
       usageDetails: {
         input: response.usage.input_tokens,
         output: response.usage.output_tokens,
@@ -448,6 +516,7 @@ export async function extractLetter(
     });
 
     generation.end();
+
     const textContent = response.content.find(block => block.type === "text");
     if (!textContent || textContent.type !== "text") {
       throw new Error("No text response from Claude");

@@ -24,6 +24,7 @@ export const classifyDocument = task({
     docId: string;
     storagePath: string;
     metadata: FileMetadata;
+    langfuseTraceId?: string;
   }) => {
     const taskId = "classify-document";
     console.log(
@@ -81,7 +82,10 @@ export const classifyDocument = task({
 
       const classification = await claudeClassify(
         uploadResult.id,
-        payload.metadata.fileName
+        payload.metadata.fileName,
+        payload.langfuseTraceId
+          ? { traceId: payload.langfuseTraceId }
+          : undefined
       );
 
       console.log(`[${taskId}] ✓ Classification completed`);

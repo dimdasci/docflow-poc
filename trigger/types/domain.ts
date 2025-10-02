@@ -24,6 +24,7 @@ export interface ExtractionTaskPayload {
   docId: string;
   claudeFileId: string | null;
   fileName: string;
+  langfuseTraceId?: string;
 }
 
 export interface InvoiceData {
