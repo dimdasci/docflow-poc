@@ -1,0 +1,62 @@
+{
+  // Enable format on save
+  "editor.formatOnSave": true,
+  "editor.formatOnPaste": true,
+  "editor.formatOnType": false,
+
+  // Set Prettier as the default formatter
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+
+  // TypeScript specific settings - PRESERVE unused imports
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll": "never",
+      "source.organizeImports": "never",
+      "source.removeUnusedImports": "never"
+    }
+  },
+
+  // JavaScript specific settings - PRESERVE unused imports
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll": "never",
+      "source.organizeImports": "never",
+      "source.removeUnusedImports": "never"
+    }
+  },
+
+  // JSON formatting
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  },
+
+  // Markdown formatting
+  "[markdown]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true,
+    "editor.wordWrap": "on"
+  },
+
+  // TypeScript compiler options for the workspace
+  "typescript.preferences.includePackageJsonAutoImports": "auto",
+  "typescript.suggest.autoImports": true,
+  "typescript.updateImportsOnFileMove.enabled": "always",
+
+  // File associations
+  "files.associations": {
+    "*.json": "json",
+    "*.md": "markdown"
+  },
+
+  // Prettier configuration
+  "prettier.requireConfig": true,
+  "prettier.useEditorConfig": false,
+
+  // Auto save
+  "files.autoSave": "onFocusChange"
+}
