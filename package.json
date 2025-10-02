@@ -8,7 +8,8 @@
     "typecheck": "pnpm -r exec tsc --noEmit",
     "lint": "pnpm -r exec tsc --noEmit",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "trigger:dev": "NODE_OPTIONS=--max-old-space-size=2048 pnpm dlx trigger.dev@latest dev"
   },
   "keywords": [],
   "author": "Dim Kharitonov <dimds@fastmail.com>",
