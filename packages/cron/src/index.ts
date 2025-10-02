@@ -56,7 +56,7 @@ async function checkAndTrigger() {
 
   // Trigger workflow for each file with fileId as idempotency key
   // Trigger.dev will handle deduplication, workflow will delete/move file after processing
-  if (false && files.length > 0) {
+  if (files.length > 0) {
     console.log(`\nTriggering workflows for ${files.length} files...`);
 
     const validFiles = files.filter(
