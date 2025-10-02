@@ -40,10 +40,13 @@ type ExtractTaskResult =
 // ORCHESTRATOR TASK: PROCESS DOCUMENT WORKFLOW
 // ============================================================================
 
-const IDEMPOTENCY_KEY_TTL = "60s";
+const IDEMPOTENCY_KEY_TTL = "10m";
 
 export const processDocumentWorkflow = task({
   id: "process-document-workflow",
+  queue: {
+    concurrencyLimit: 5, // Max 5 workflows running simultaneously
+  },
   retry: {
     maxAttempts: 2, // Only retry on storage failures
     factor: 2,
