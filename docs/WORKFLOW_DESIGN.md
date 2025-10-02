@@ -94,7 +94,7 @@ Actions:
   - Download file from Google Drive as Buffer
   - Upload file to Supabase Storage inbox folder: `inbox/{docId}.pdf`
   - Store original filename in object metadata
-  - Update registry status: "downloading"
+  - Update registry status: "downloading" before download, then "downloaded" on success
 
 Output: {
   storagePath: string,      // inbox/{docId}.pdf
@@ -141,20 +141,20 @@ Actions:
     * Request confidence score + reasoning
   - Parse JSON response
   - Apply confidence threshold (>= 0.8)
-  - Update registry status: "classifying"
+  - Update registry status: "classifying" before the call, then persist classification fields with status "classified" (or "classification_failed" on fallback)
 
 Output: {
   documentType: "invoice" | "bank_statement" | "government_letter" | "unknown",
   confidence: number,        // 0.0 - 1.0
   reasoning: string,
   possibleType: string,      // Original prediction before threshold
-  claudeFileUrl: string      // URL for subsequent extraction calls
+  claudeFileId: string | null
 }
 
 Retry:  10 attempts (AI APIs need more tolerance)
 Failure:
   - Default to documentType: "unknown"
-  - Set confidence: 0.0
+  - Set confidence: 0.0 and claudeFileId: null
   - Update registry status: "classification_failed"
   - Continue workflow (still store the file)
 
@@ -171,259 +171,9 @@ Key Improvement:
 
 ---
 
-### Task 3a: `extract-invoice-data` (Hidden Task)
+### Task 3: `store-file` (SAFE POINT)
 
-**Purpose:** Extract structured invoice data
-
-**API Dependencies:** Claude API (Anthropic)
-
-```typescript
-Input:  {
-  docId: string,
-  claudeFileUrl: string
-}
-
-Actions:
-  - Call Claude with invoice extraction prompt
-  - Parse JSON response
-  - Validate schema
-
-Output: {
-  invoiceData: {
-    document_info: {
-      invoice_number: string,
-      invoice_date: string,      // YYYY-MM-DD
-      due_date: string,
-      currency: string,
-      language: string
-    },
-    vendor: {
-      name: string,
-      address: string,
-      vat_number: string,
-      tax_id: string,
-      contact_email: string
-    },
-    customer: {
-      name: string,
-      address: string,
-      vat_number: string
-    },
-    amounts: {
-      subtotal: number,
-      total_vat: number,
-      total_amount: number,
-      vat_rate: number
-    },
-    line_items: [
-      {
-        description: string,
-        quantity: number,
-        unit_price: number,
-        vat_rate: number,
-        vat_amount: number,
-        line_total: number
-      }
-    ],
-    payment: {
-      terms: string,
-      method: string,
-      bank_details: string
-    }
-  }
-}
-
-Retry:  10 attempts
-Failure:
-  - Update registry status: "extraction_failed"
-  - Continue to storage (without extractedData)
-```
-
-**Example:** See `docs/invoice.json`
-
----
-
-### Task 3b: `extract-statement-data` (Hidden Task)
-
-**Purpose:** Extract structured bank statement data
-
-**API Dependencies:** Claude API (Anthropic)
-
-```typescript
-Input:  {
-  docId: string,
-  claudeFileUrl: string
-}
-
-Actions:
-  - Call Claude with statement extraction prompt
-  - Parse JSON response
-  - Validate schema
-
-Output: {
-  statementData: {
-    document_info: {
-      statement_type: "bank_statement",
-      bank_name: string,
-      document_title: string,
-      period_start: string,      // YYYY-MM-DD
-      period_end: string,
-      currency: string,
-      language: string
-    },
-    account: {
-      holder_name: string,
-      account_number: string,
-      iban: string,
-      opening_balance: number,
-      closing_balance: number
-    },
-    transactions: [
-      {
-        date: string,            // YYYY-MM-DD
-        description: string,
-        amount: number,          // Negative for debits, positive for credits
-        balance: number
-      }
-    ]
-  }
-}
-
-Retry:  10 attempts
-Failure: Same as invoice extraction
-```
-
-**Example:** See `docs/statement.json`
-
----
-
-### Task 3c: `extract-letter-data` (Hidden Task)
-
-**Purpose:** Extract structured official letter data
-
-**API Dependencies:** Claude API (Anthropic)
-
-```typescript
-Input:  {
-  docId: string,
-  claudeFileUrl: string
-}
-
-Actions:
-  - Call Claude with letter extraction prompt
-  - Parse JSON response with reasoning checklist
-  - Validate schema
-
-Output: {
-  letterData: {
-    reasoning_checklist: {
-      has_due_date: boolean,
-      due_date_field_name: string,
-      due_date_value: string,
-      has_money_amount: boolean,
-      money_amount_quote: string
-    },
-    document_info: {
-      document_type: "official_letter",
-      language: string,
-      date: string             // YYYY-MM-DD
-    },
-    letter_details: {
-      subject: string,
-      reference_number: string,
-      due_date: string,
-      amount_due: number,
-      currency: string,
-      letter_type: "tax_notice" | "vat_reminder" | "audit_notice" | "compliance" | "other"
-    },
-    sender: {
-      organization: string,
-      address: string,
-      country: string,
-      contact_title: string,
-      reference: string
-    },
-    recipient: {
-      organization: string,
-      title: string,
-      address: string,
-      country: string
-    },
-    content: {
-      greeting: string,
-      main_text: string,
-      closing: string
-    }
-  }
-}
-
-Retry:  10 attempts
-Failure: Same as invoice extraction
-```
-
-**Examples:** See `docs/letter.json` and `docs/tax_letter.json`
-
----
-
-### Task 5: `store-metadata`
-
-**Purpose:** Save extracted data and metadata to Supabase database
-
-**API Dependencies:** Supabase Database
-
-```typescript
-Input:  {
-  docId: string,
-  documentType: string,
-  classification: ClassificationResult,
-  extractedData?: InvoiceData | StatementData | LetterData,
-  extractionError?: string
-}
-
-Actions:
-  1. Upload JSON metadata to Supabase Storage (if extractedData exists):
-     - Bucket: "documents"
-     - Path: "{type}/{year}/{month}/{docId}.json"
-     - Content: { classification, extractedData, metadata }
-
-  2. Update income_registry table:
-     - classification, confidence, reasoning
-     - storage_path_json (if uploaded)
-     - status: "processed" | "extraction_failed" | "rejected"
-     - processed_at: NOW()
-
-  3. Insert to type-specific table (if extractedData exists):
-     - invoices: INSERT invoice details (line_items as JSONB)
-     - statements: INSERT account info (transactions as JSONB)
-     - letters: INSERT letter details
-     - Link via doc_id (FK to income_registry)
-
-Output: {
-  registryId: string,
-  status: "processed" | "extraction_failed" | "rejected",
-  jsonStoragePath?: string
-}
-
-Retry:  3 attempts (use idempotent upserts)
-Failure:
-  - Update registry status: "metadata_storage_failed"
-  - Throw error (will retry entire orchestrator)
-  - Note: PDF file is already safe in storage
-```
-
-**Status Transitions:**
-- `stored` → `saving_metadata` → `processed` | `extraction_failed` | `rejected`
-
-**Status Values:**
-- `processed`: Successfully stored with extracted data
-- `extraction_failed`: Stored file + classification, but extraction failed
-- `rejected`: Low confidence or unknown type (stored without extraction)
-
----
-
-### Task 3: `store-file`
-
-**Purpose:** Move file from inbox to permanent location and delete from Google Drive (SAFE POINT)
+**Purpose:** Move the PDF from the inbox staging area into its permanent location and clean up temporary copies
 
 **API Dependencies:** Supabase Storage (S3), Google Drive API
 
@@ -433,207 +183,195 @@ Input:  {
   fileId: string,
   storagePath: string,       // inbox/{docId}.pdf
   fileName: string,
-  documentType: string,      // invoice, bank_statement, government_letter, unknown
+  documentType: "invoice" | "bank_statement" | "government_letter" | "unknown",
   metadata: FileMetadata
 }
 
 Actions:
-  1. Download file from Supabase Storage inbox folder:
-     - Source path: inbox/{docId}.pdf
-
-  2. Determine permanent storage path based on documentType and date:
-     - Path: "{type}/{year}/{month}/{docId}.pdf"
-     - Examples:
-       * invoice/2025/09/abc123.pdf
-       * bank_statement/2025/09/def456.pdf
-       * government_letter/2025/09/ghi789.pdf
-       * unknown/2025/09/jkl012.pdf
-
-  3. Upload PDF to permanent location in Supabase Storage:
-     - Bucket: "documents"
-     - Path: {permanentStoragePath}
-     - ContentType: "application/pdf"
-
-  4. Delete file from inbox folder (Supabase Storage):
-     - Remove: inbox/{docId}.pdf
-
-  5. Delete file from Google Drive inbox (only if upload succeeds):
-     - Call Drive API delete on fileId
-
-  6. Update registry:
-     - Set storage_path_pdf
-     - Set status: "stored"
-     - Record stored_at timestamp
+  - Update registry status to "storing"
+  - Derive final storage path: `{documentType}/{year}/{month}/{docId}.pdf`
+  - Copy the file from `inbox/{docId}.pdf` to the final path in Supabase Storage
+  - Move the Google Drive file into a processed folder when `DRIVE_PROCESSED_FOLDER_ID` is configured (best effort - non fatal)
+  - Delete the Supabase inbox object to keep staging empty
+  - Update registry with `storage_path_pdf` and status `stored`
 
 Output: {
   stored: boolean,
-  storagePath: string,        // Permanent path
-  deletedFromInbox: boolean   // Both Google Drive and Supabase inbox
+  storagePath: string,
+  deletedFromInbox: boolean
 }
 
-Retry:  5 attempts (idempotent - Supabase overwrites, deletes are idempotent)
+Retry:  5 attempts (copy + delete operations are idempotent)
 Failure:
   - Update registry status: "store_failed"
-  - Critical error - throw (need file in permanent storage)
-  - File may remain in inbox folders
+  - Throw error (workflow cannot continue without a permanent copy)
 
 Key Improvement:
-  - Moves file from inbox/{docId}.pdf to {type}/{year}/{month}/{docId}.pdf
-  - Reads from storage (not from task output) - fully stateless
-  - Cleans up both Google Drive inbox AND Supabase inbox folder
-  - After this step: file only exists in permanent location
+  - Establishes the SAFE POINT — after this task the PDF exists only in its organized, permanent location and the inbox staging folder is clear
 ```
 
 **Status Transitions:** `classified` → `storing` → `stored` | `store_failed`
 
-**Why This is Critical (SAFE POINT):** Once file is moved to permanent location in Supabase Storage:
-- ✅ **Document is persistent** - In permanent, organized location by type
-- ✅ **All inboxes clean** - Both Google Drive and Supabase inbox folders cleaned
-- ✅ **Cron won't reprocess** - File deleted from Google Drive inbox
-- ✅ **Safe to retry extraction** - Can retry expensive AI operations 10+ times
-- ✅ **Manual recovery possible** - File is in permanent storage with known path
-- ✅ **Idempotent** - Can retry this task safely (overwrites + deletes are idempotent)
-- ✅ **Stateless** - Reads from inbox storage, not from task output
+**Why This Matters:**
+- ✅ Document is persistent in the organized Supabase path (type/year/month/docId)
+- ✅ Supabase inbox is cleared, so retries do not accumulate temporary copies
+- ✅ Google Drive inbox entry is moved out of the watched folder, preventing reprocessing
+- ✅ Expensive extraction steps can retry safely because the file no longer depends on Google Drive availability
+- ✅ Operations are idempotent; re-running the task overwrites the same final path without duplication
 
 ---
+
+### Task 4a: `extract-invoice-data` (Hidden Task)
+
+**Purpose:** Extract structured invoice data for downstream storage
+
+**API Dependencies:** Claude API (Anthropic)
+
+```typescript
+Input:  {
+  docId: string,
+  claudeFileId: string | null
+}
+
+Actions:
+  - Require a valid Claude file id (throws if missing)
+  - Call Claude with the invoice extraction prompt
+  - Parse and validate the structured JSON response against the expected schema
+
+Output: {
+  invoiceData: InvoiceData
+}
+
+Retry:  10 attempts
+Failure:
+  - Throw error; the orchestrator records the message and continues to metadata storage without extracted data
+```
+
+**Example:** See `docs/invoice.json`
+
+---
+
+### Task 4b: `extract-statement-data` (Hidden Task)
+
+**Purpose:** Extract structured bank statement data
+
+**API Dependencies:** Claude API (Anthropic)
+
+```typescript
+Input:  {
+  docId: string,
+  claudeFileId: string | null
+}
+
+Actions:
+  - Require a valid Claude file id (throws if missing)
+  - Call Claude with the bank statement extraction prompt
+  - Parse and validate the JSON response
+
+Output: {
+  statementData: StatementData
+}
+
+Retry:  10 attempts
+Failure: Same handling as the invoice extractor (error bubbles up to orchestrator)
+```
+
+**Example:** See `docs/statement.json`
+
+---
+
+### Task 4c: `extract-letter-data` (Hidden Task)
+
+**Purpose:** Extract structured government-letter data
+
+**API Dependencies:** Claude API (Anthropic)
+
+```typescript
+Input:  {
+  docId: string,
+  claudeFileId: string | null
+}
+
+Actions:
+  - Require a valid Claude file id (throws if missing)
+  - Call Claude with the official letter extraction prompt (includes reasoning checklist)
+  - Parse and validate the JSON response
+
+Output: {
+  letterData: LetterData
+}
+
+Retry:  10 attempts
+Failure: Same handling as other extractors (error returned to orchestrator)
+```
+
+**Examples:** See `docs/letter.json` and `docs/tax_letter.json`
+
+---
+
+### Task 5: `store-metadata`
+
+**Purpose:** Persist classification, extraction results, and metadata to Supabase
+
+**API Dependencies:** Supabase Database, Supabase Storage
+
+```typescript
+Input:  {
+  docId: string,
+  documentType: "invoice" | "bank_statement" | "government_letter" | "unknown",
+  classification: ClassificationResult | null,
+  extractedData?: {
+    invoiceData?: InvoiceData;
+    statementData?: StatementData;
+    letterData?: LetterData;
+  } | null,
+  extractionError?: string | null
+}
+
+Actions:
+  1. Update registry status to "saving_metadata"
+  2. When extracted data exists, upload `{classification, extractedData, metadata}` JSON to Supabase Storage at `{documentType}/{year}/{month}/{docId}.json`
+  3. Determine final status:
+     - `extraction_failed` if `extractionError` is present
+     - `rejected` when no extracted data or documentType is `"unknown"`
+     - `processed` otherwise
+  4. Update `income_registry` with status, storage path, confidence, reasoning, and error details
+  5. Upsert into the type-specific table that matches the extracted payload (invoices/statements/letters)
+
+Output: {
+  registryId: string,
+  status: DocumentStatus,
+  jsonStoragePath?: string
+}
+
+Retry:  3 attempts (database operations and storage upload are idempotent)
+Failure:
+  - Update registry status to "metadata_storage_failed"
+  - Throw error so the orchestrator retries from Step 5 (the PDF is already safe)
+```
+
+**Status Transitions:** `stored` → `saving_metadata` → `processed` | `extraction_failed` | `rejected`
+
+**Status Values:**
+- `processed`: Successfully stored with extracted data
+- `extraction_failed`: Stored file + classification, but extraction failed
+- `rejected`: Low confidence or unknown type (stored without extraction)
+
 
 ## Orchestrator Task: `process-document-workflow`
 
 **Purpose:** Coordinate the entire document processing pipeline
 
-```typescript
-export const processDocumentWorkflow = task({
-  id: "process-document-workflow",
-  retry: {
-    maxAttempts: 2,  // Only retry on storage failures
-  },
-  run: async (payload: {
-    fileId: string;
-    fileName: string;
-    mimeType: string;
-    createdTime: string;
-  }) => {
+**Execution outline:**
 
-    // STEP 0: Register document (prevent loss)
-    const register = await registerDocument.triggerAndWait(payload);
-    if (!register.ok) {
-      throw new Error(`Failed to register document: ${register.error}`);
-    }
-    const { docId, registryId } = register.output;
-
-    // STEP 1: Download from Google Drive and upload to Supabase inbox
-    const download = await downloadAndPrepare.triggerAndWait({
-      docId,
-      fileId: payload.fileId,
-      fileName: payload.fileName,
-      mimeType: payload.mimeType,
-    });
-
-    if (!download.ok) {
-      // Already marked as download_failed by task
-      return {
-        status: "download_failed",
-        docId,
-        error: download.error
-      };
-    }
-
-    // File is now in Supabase Storage inbox: inbox/{docId}.pdf
-    // Subsequent tasks read from storage (stateless)
-
-    // STEP 2: Classify (reads from storage)
-    const classify = await classifyDocument.triggerAndWait({
-      docId,
-      storagePath: download.output.storagePath,  // inbox/{docId}.pdf
-      metadata: download.output.metadata,
-    });
-
-    if (!classify.ok) {
-      // Task defaults to "unknown", continue
-      // Classification failure is not fatal
-    }
-
-    const { documentType, confidence, claudeFileUrl } = classify.ok
-      ? classify.output
-      : { documentType: "unknown", confidence: 0, claudeFileUrl: null };
-
-    // STEP 3: Move file to permanent location (SAFE POINT!)
-    const storeFile = await storeFile.triggerAndWait({
-      docId,
-      fileId: payload.fileId,
-      storagePath: download.output.storagePath,  // inbox/{docId}.pdf
-      fileName: payload.fileName,
-      documentType,
-      metadata: download.output.metadata,
-    });
-
-    if (!storeFile.ok) {
-      // Critical - file not in permanent storage, can't continue safely
-      return {
-        status: "store_failed",
-        docId,
-        documentType,
-        error: storeFile.error
-      };
-    }
-
-    // File is now in permanent location: {type}/{year}/{month}/{docId}.pdf
-    // Both inboxes clean (Google Drive and Supabase inbox folder deleted)
-    // We can retry extraction/metadata storage as many times as needed
-
-    // STEP 4: Extract (type-specific, skip if unknown/low confidence)
-    let extractResult = null;
-
-    if (documentType !== "unknown" && confidence >= 0.8) {
-      switch (documentType) {
-        case "invoice":
-          extractResult = await extractInvoiceData.triggerAndWait({
-            docId,
-            claudeFileUrl,
-          });
-          break;
-        case "bank_statement":
-          extractResult = await extractStatementData.triggerAndWait({
-            docId,
-            claudeFileUrl,
-          });
-          break;
-        case "government_letter":
-          extractResult = await extractLetterData.triggerAndWait({
-            docId,
-            claudeFileUrl,
-          });
-          break;
-      }
-    }
-
-    // STEP 5: Store metadata to Supabase
-    const storeMetadata = await storeMetadata.triggerAndWait({
-      docId,
-      documentType,
-      classification: classify.ok ? classify.output : null,
-      extractedData: extractResult?.ok ? extractResult.output : null,
-      extractionError: extractResult?.ok ? null : extractResult?.error,
-    });
-
-    if (!storeMetadata.ok) {
-      // Critical failure - throw to retry orchestrator
-      // But PDF file is already safe in storage
-      throw new Error(`Metadata storage failed: ${storeMetadata.error}`);
-    }
-
-    return {
-      status: storeMetadata.output.status,
-      documentType,
-      confidence,
-      registryId,
-      pdfStoragePath: storeFile.output.storagePath,
-      jsonStoragePath: storeMetadata.output.jsonStoragePath,
-      inboxCleaned: storeFile.output.deletedFromInbox,
-    };
-  },
-});
-```
+1. **Create global idempotency key** with `idempotencyKeys.create(payload.fileId, { scope: "global" })` and reuse it (TTL `60s`) for every `triggerAndWait` call.
+2. **Register document (Step 0).** Trigger `registerDocument` with the original payload. Throw on failure. Capture `{ docId, registryId }` on success.
+3. **Download & prepare (Step 1).** Trigger `downloadAndPrepare` with `{ docId, fileId, fileName, mimeType }`. On failure return early with a `WorkflowOutput` describing the `download_failed` status, `documentType: "unknown"`, `confidence: 0`, `pdfStoragePath: ""`, `inboxCleaned: false`, and the error message. On success capture the inbox storage path, metadata, and checksum.
+4. **Classify (Step 2).** Trigger `classifyDocument`. When it succeeds, hold on to the `ClassificationResult`. When it fails, continue with a synthesized fallback (`documentType: "unknown"`, `confidence: 0`, `claudeFileId: null`).
+5. **Store file (Step 3 / SAFE POINT).** Trigger `storeFile` with `{ docId, fileId, storagePath, fileName, documentType, metadata }`. Any failure throws. Success yields the permanent storage path and inbox cleanup indicator.
+6. **Extract data (Step 4).** Only run extraction when `documentType !== "unknown"`, `confidence >= 0.8`, and `claudeFileId` is available. Trigger the matching extractor task. If the extractor fails, note the `extractionError`; otherwise capture the extracted payload.
+7. **Store metadata (Step 5).** Trigger `storeMetadata` with the classification (possibly `null`), optional extracted data, and any `extractionError`. Failure throws so the orchestrator retries from this step while the PDF remains safe in storage.
+8. **Return `WorkflowOutput`.** Merge the metadata status, document type, confidence, registry/document IDs, permanent storage path, optional JSON path, and `inboxCleaned` flag. Errors are only populated for early download failures.
 
 ## Registry Status Lifecycle
 
@@ -651,10 +389,6 @@ classified
 storing → store_failed [END - manual intervention needed]
   ↓
 stored [SAFE POINT - File in Supabase, inbox cleaned]
-  ↓
-extracting → extraction_failed (continue to metadata storage)
-  ↓
-extracted (or extraction_failed)
   ↓
 saving_metadata → metadata_storage_failed [RETRY from STEP 5]
   ↓
@@ -674,7 +408,7 @@ processed | extraction_failed | rejected [END]
 | Download failed | Update registry | `download_failed` | ❌ No |
 | Classification failed | Default to "unknown" | `classification_failed` | ✅ Yes (store in unknown folder) |
 | File storage failed | Update registry | `store_failed` | ❌ No (critical - can't continue) |
-| Extraction failed | Continue to metadata | `extracting` → `saving_metadata` | ✅ Yes (file already stored) |
+| Extraction failed | Record error, continue to metadata | `extraction_failed` (set in Step 5) | ✅ Yes (file already stored) |
 | Metadata storage failed | Throw error | `metadata_storage_failed` | ❌ No (retry from STEP 5, PDF safe) |
 
 ## Supabase Schema Requirements
