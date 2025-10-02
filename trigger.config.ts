@@ -1,4 +1,5 @@
 import { defineConfig } from "@trigger.dev/sdk";
+import { initLangfuseTracing } from "./trigger/utils/langfuseInstrumentation";
 
 export default defineConfig({
   project: "proj_jjxpylazzxlknujnixlt",
@@ -19,4 +20,7 @@ export default defineConfig({
     },
   },
   dirs: ["trigger"],
+  init: async () => {
+    initLangfuseTracing();
+  },
 });

@@ -4,7 +4,12 @@ import {
   extractStatement as claudeExtractStatement,
   extractLetter as claudeExtractLetter,
 } from "../utils/claude";
-import type { InvoiceData, StatementData, LetterData } from "../types/domain";
+import type {
+  InvoiceData,
+  StatementData,
+  LetterData,
+  ExtractionTaskPayload,
+} from "../types/domain";
 
 // ============================================================================
 // TASK 4a: EXTRACT INVOICE DATA (Hidden)
@@ -19,7 +24,7 @@ export const extractInvoiceData = task({
     maxTimeoutInMs: 30000,
     randomize: true,
   },
-  run: async (payload: { docId: string; claudeFileId: string | null }) => {
+  run: async (payload: ExtractionTaskPayload) => {
     const taskId = "extract-invoice-data";
     console.log(`[${taskId}] Starting extraction for doc: ${payload.docId}`);
     console.log(`[${taskId}] Claude File ID: ${payload.claudeFileId}`);
@@ -35,7 +40,10 @@ export const extractInvoiceData = task({
       );
       console.log(`[${taskId}] Requesting structured invoice data...`);
 
-      const invoiceData = await claudeExtractInvoice(payload.claudeFileId);
+      const invoiceData = await claudeExtractInvoice(
+        payload.claudeFileId,
+        payload.fileName
+      );
 
       console.log(`[${taskId}] ✓ Extraction completed successfully`);
       console.log(
@@ -71,7 +79,7 @@ export const extractStatementData = task({
     maxTimeoutInMs: 30000,
     randomize: true,
   },
-  run: async (payload: { docId: string; claudeFileId: string | null }) => {
+  run: async (payload: ExtractionTaskPayload) => {
     const taskId = "extract-statement-data";
     console.log(`[${taskId}] Starting extraction for doc: ${payload.docId}`);
     console.log(`[${taskId}] Claude File ID: ${payload.claudeFileId}`);
@@ -87,7 +95,10 @@ export const extractStatementData = task({
       );
       console.log(`[${taskId}] Requesting structured bank statement data...`);
 
-      const statementData = await claudeExtractStatement(payload.claudeFileId);
+      const statementData = await claudeExtractStatement(
+        payload.claudeFileId,
+        payload.fileName
+      );
 
       console.log(`[${taskId}] ✓ Extraction completed successfully`);
       console.log(
@@ -131,7 +142,7 @@ export const extractLetterData = task({
     maxTimeoutInMs: 30000,
     randomize: true,
   },
-  run: async (payload: { docId: string; claudeFileId: string | null }) => {
+  run: async (payload: ExtractionTaskPayload) => {
     const taskId = "extract-letter-data";
     console.log(`[${taskId}] Starting extraction for doc: ${payload.docId}`);
     console.log(`[${taskId}] Claude File ID: ${payload.claudeFileId}`);
@@ -147,7 +158,10 @@ export const extractLetterData = task({
       );
       console.log(`[${taskId}] Requesting structured official letter data...`);
 
-      const letterData = await claudeExtractLetter(payload.claudeFileId);
+      const letterData = await claudeExtractLetter(
+        payload.claudeFileId,
+        payload.fileName
+      );
 
       console.log(`[${taskId}] ✓ Extraction completed successfully`);
       console.log(

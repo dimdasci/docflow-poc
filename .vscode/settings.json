@@ -58,5 +58,6 @@
   "prettier.useEditorConfig": false,
 
   // Auto save
-  "files.autoSave": "onFocusChange"
+  "files.autoSave": "onFocusChange",
+  "typescript.tsdk": "node_modules/typescript/lib"
 }

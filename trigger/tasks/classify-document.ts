@@ -79,7 +79,10 @@ export const classifyDocument = task({
       console.log(`[${taskId}] - government_letter`);
       console.log(`[${taskId}] - unknown`);
 
-      const classification = await claudeClassify(uploadResult.id);
+      const classification = await claudeClassify(
+        uploadResult.id,
+        payload.metadata.fileName
+      );
 
       console.log(`[${taskId}] ✓ Classification completed`);
       console.log(

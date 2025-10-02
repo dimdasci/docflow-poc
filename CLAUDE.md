@@ -103,6 +103,9 @@ services (see Railway documentation).
 - SUPABASE_STORAGE_ACCESS_KEY_ID -- Supabase storage access key ID
 - SUPABASE_STORAGE_ACCESS_KEY -- Supabase storage access key
 - SUPABASE_STORAGE_BUCKET -- Supabase storage bucket
+- LANGFUSE_SECRET_KEY -- Langfuse secret key
+- LANGFUSE_PUBLIC_KEY -- Langfuse public key
+- LANGFUSE_BASE_URL -- Langfuse base URL
 
 ## References
 

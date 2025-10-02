@@ -17,6 +17,15 @@ export interface ClassificationResult {
   claudeFileId: string | null;
 }
 
+/**
+ * Payload for extraction tasks
+ */
+export interface ExtractionTaskPayload {
+  docId: string;
+  claudeFileId: string | null;
+  fileName: string;
+}
+
 export interface InvoiceData {
   document_info: {
     invoice_number: string;
@@ -136,6 +145,7 @@ export interface WorkflowInput {
   fileId: string; // Google Drive file ID
   fileName: string; // Original file name
   mimeType: string; // Must be "application/pdf"
+  size?: number; // File size in bytes
   createdTime: string; // ISO 8601 timestamp from Google Drive
 }
 

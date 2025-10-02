@@ -234,6 +234,7 @@ export const processDocumentWorkflow = task({
             {
               docId,
               claudeFileId,
+              fileName: payload.fileName,
             },
             { idempotencyKey, idempotencyKeyTTL: IDEMPOTENCY_KEY_TTL }
           );
@@ -255,6 +256,7 @@ export const processDocumentWorkflow = task({
             {
               docId,
               claudeFileId,
+              fileName: payload.fileName,
             },
             { idempotencyKey, idempotencyKeyTTL: IDEMPOTENCY_KEY_TTL }
           );
@@ -278,6 +280,7 @@ export const processDocumentWorkflow = task({
             {
               docId,
               claudeFileId,
+              fileName: payload.fileName,
             },
             { idempotencyKey, idempotencyKeyTTL: IDEMPOTENCY_KEY_TTL }
           );
